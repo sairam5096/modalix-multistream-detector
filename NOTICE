@@ -1,0 +1,11 @@
+modalix-multistream-detector
+
+The on-device detector (som/) is derived from the SiMa "sima-neat/apps"
+examples (examples/object-detection/high-density-multi-stream-object-detector),
+which are licensed under the Apache License, Version 2.0.
+
+  https://github.com/sima-neat/apps
+
+This project retains that license (see LICENSE). SiMa, Modalix, and Neat are
+trademarks of SiMa.ai. This repository is a community demo and is not an
+official SiMa release.

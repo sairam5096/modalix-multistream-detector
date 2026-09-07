@@ -1,0 +1,63 @@
+# 48 streams @ 5 fps, three INT8 models loaded, single model per camera (route).
+# Replace MEDIA_HOST with your RTSP server (e.g. a MediaMTX instance).
+models:
+  - {name: coco-n,  description: "YOLO26n int8 (fast)",     path: ../models/yolo26n-det-int8-b1.tar.gz, decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+  - {name: coco-v8, description: "YOLOv8n int8 (alt)",      path: ../models/yolov8n_ultra_mpk.tar.gz,   decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+  - {name: coco-m,  description: "YOLO26m bf16 (accurate)", path: ../models/yolo26m-det-bf16-mla_tess-b1.tar.gz, decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+default_models: [coco-n]
+streams:
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_13, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_14, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_15, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_16, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_13, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_14, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_15, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_16, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_13, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_14, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_15, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_16, models: [coco-n]}
+# 720p, 5 fps sources. target_fps 0 = no decimation. Lean decoder = low CMA per stream.
+input: {width: 1280, height: 720, fps: 5, target_fps: 0, latency_ms: 100, decoder_buffers: 4, decoder_input_buffers: 1, decoder_tuning: low-memory}
+# max_inflight_per_stream is the key memory knob: keep it 1-2 for high stream counts.
+inference: {min_score: 0.45, nms_iou: 0.60, max_detections: 50, queue_depth: 2, internal_queue_depth: 1, max_inflight_per_stream: 2, max_inflight_total: 16}
+runtime: {watchdog_stall_s: 45, rebuild_retries: 4, report_hz: 10}
+control: {host: 0.0.0.0, port: 8600}
+crops: {enabled: false}

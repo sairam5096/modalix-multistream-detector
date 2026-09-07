@@ -1,0 +1,13 @@
+[Unit]
+Description=Multi-model live viewer (host web app)
+After=network.target
+[Service]
+Type=simple
+Environment=SOM_API=http://SET-SOM-IP:8600
+Environment=PORT=8090
+WorkingDirectory=%h/multimodel/host/viewer
+ExecStart=/usr/bin/python3 %h/multimodel/host/viewer/serve.py
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=default.target

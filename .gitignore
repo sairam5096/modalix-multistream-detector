@@ -1,0 +1,16 @@
+# model binaries (licensing + size) — see models/README.md
+*.tar.gz
+*.onnx
+*.elf
+*.lm
+# build + runtime artifacts
+build/
+*.o
+*.log
+crops/
+crops_host/
+crops48/
+__pycache__/
+*.pyc
+# labels file (ship your own)
+coco_label.txt

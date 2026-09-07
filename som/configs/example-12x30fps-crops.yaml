@@ -1,0 +1,26 @@
+# 12 streams @ 30 fps with exact on-SoM cropping enabled (pixel-perfect, same
+# decoder as detection). Crops fit a ~12-camera subset on the single MLA.
+models:
+  - {name: coco-n,  description: "YOLO26n int8 (fast)",     path: ../models/yolo26n-det-int8-b1.tar.gz, decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+  - {name: coco-v8, description: "YOLOv8n int8 (alt)",      path: ../models/yolov8n_ultra_mpk.tar.gz,   decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+  - {name: coco-m,  description: "YOLO26m bf16 (accurate)", path: ../models/yolo26m-det-bf16-mla_tess-b1.tar.gz, decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+default_models: [coco-n]
+streams:
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-n]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-n]}
+input: {width: 1280, height: 720, fps: 30, target_fps: 0, latency_ms: 100, decoder_buffers: 4, decoder_input_buffers: 1, decoder_tuning: low-memory}
+inference: {min_score: 0.45, nms_iou: 0.60, max_detections: 50, queue_depth: 2, internal_queue_depth: 1, max_inflight_per_stream: 2, max_inflight_total: 16}
+runtime: {watchdog_stall_s: 30, rebuild_retries: 5, report_hz: 12}
+control: {host: 0.0.0.0, port: 8600}
+# crops: exact frame cut on the SoM (matched by pts). max_streams caps the crop subset.
+crops: {enabled: true, dir: /media/nvme/crops, min_conf: 0.45, dedup_window: 12, pad: 0.08, max_disk: 6000, max_streams: 12}

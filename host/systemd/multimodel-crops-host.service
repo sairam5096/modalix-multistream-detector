@@ -1,0 +1,15 @@
+[Unit]
+Description=Host-side content-aware crop app for all streams
+After=network.target
+[Service]
+Type=simple
+Environment=SOM_API=http://SET-SOM-IP:8600
+Environment=PORT=8092
+Environment=CROP_LAG=0.12
+Environment=CROP_PAD=0.16
+WorkingDirectory=%h/multimodel/host/crops
+ExecStart=/usr/bin/python3 %h/multimodel/host/crops/crops_host48.py
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=default.target

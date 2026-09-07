@@ -1,0 +1,132 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SiMa Modalix — Multi-Model Live Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box}
+  body{font-family:system-ui,sans-serif;margin:0;background:#0b0d12;color:#e8eaed}
+  header{padding:10px 16px;background:#12151c;border-bottom:1px solid #232833;display:flex;
+         align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+  h1{font-size:16px;margin:0;font-weight:600}.sub{color:#8b94a3;font-size:12px}
+  header .spacer{flex:1}header label{font-size:13px;color:#b9c2d0}
+  select,button{background:#1b2029;color:#e8eaed;border:1px solid #2c3340;border-radius:6px;padding:4px 8px;font-size:13px}
+  button{cursor:pointer}button:hover{background:#232a35}
+  input[type=range]{vertical-align:middle}
+  #grid{display:grid;gap:10px;padding:12px;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+  .tile{background:#12151c;border:1px solid #232833;border-radius:10px;overflow:hidden}
+  .frame{position:relative;width:100%;aspect-ratio:16/9;background:#05060a}
+  .frame video{width:100%;height:100%;object-fit:contain;display:block;background:#05060a}
+  .frame canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+  .frame .status{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#6b7480;font-size:13px}
+  .bar{display:flex;align-items:center;gap:8px;padding:7px 10px}.cam{font-weight:600;font-size:13px}
+  .bar .spacer{flex:1}.fps{font-size:12px;color:#8b94a3;font-variant-numeric:tabular-nums}
+  .chip{display:inline-block;border-radius:999px;padding:0 8px;font-size:11px;line-height:18px;color:#fff}
+  .models{display:flex;gap:4px;flex-wrap:wrap;padding:0 10px 9px}
+  .mbtn{font-size:12px;padding:2px 8px;border-radius:6px;border:1px solid #2c3340;background:#1b2029;color:#cfd6e0;cursor:pointer}
+  .mbtn.on{background:#0f766e;border-color:#0f766e;color:#fff}
+  .legend{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+</style></head><body>
+<header>
+  <div><h1>SiMa Modalix — Multi-Model Live Viewer</h1><div class="sub" id="sub">connecting…</div></div>
+  <div class="spacer"></div>
+  <div class="legend" id="legend"></div>
+  <label title="Delays the boxes to line up with the buffered HLS video">Sync
+    <input id="sync" type="range" min="0" max="6000" step="100" value="3200" style="width:110px">
+    <span id="syncv" class="sub">3.2s</span></label>
+  <label>Tiles <input id="tilecount" type="number" min="1" max="48" value="8" style="width:56px"></label>
+  <label>All → <select id="allsel"></select></label><button onclick="applyAll()">Apply</button>
+</header>
+<div id="grid"></div>
+<script>
+const API = "";                              // same origin (server proxies /api/* -> SOM)
+const HLS_PORT = 8888;                        // MediaMTX HLS on the video host
+let MODELS = [];
+const COLORS = ['#22d3ee','#f472b6','#a3e635','#fbbf24','#c084fc','#fb7185','#34d399','#60a5fa'];
+const modelColor = {};
+const colorFor = m => (m in modelColor) ? modelColor[m] : (modelColor[m]=COLORS[Object.keys(modelColor).length%COLORS.length]);
+
+function hlsUrl(rtsp){ try{const u=new URL(rtsp);return `http://${u.hostname}:${HLS_PORT}${u.pathname}/index.m3u8`;}catch(e){return null;} }
+
+function startVideo(video, statusEl, rtsp){
+  const url = hlsUrl(rtsp); if(!url){statusEl.textContent='bad url';return;}
+  const ready=()=>{statusEl.style.display='none';video.play().catch(()=>{});};
+  if(video.canPlayType('application/vnd.apple.mpegurl')){
+    video.src=url;video.addEventListener('loadeddata',ready,{once:true});return;
+  }
+  if(window.Hls&&Hls.isSupported()){
+    const hls=new Hls({lowLatencyMode:true,liveSyncDurationCount:3,backBufferLength:8});
+    hls.loadSource(url);hls.attachMedia(video);
+    hls.on(Hls.Events.FRAG_BUFFERED,ready);
+    hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)statusEl.textContent='video: '+d.details;});
+  } else statusEl.textContent='HLS not supported';
+}
+
+const tiles = {};                 // idx -> {video,canvas,status,fpsEl,models,cur,hist:[{t,objs}]}
+let syncMs = 3200;
+
+function buildTile(s){
+  const t=document.createElement('div');t.className='tile';const name=s.url.split('/').pop();
+  t.innerHTML=`<div class="frame"><video autoplay muted playsinline></video><canvas></canvas>
+      <div class="status">connecting video…</div></div>
+    <div class="bar"><span class="cam">Cam ${s.stream}</span><span class="sub" style="font-size:11px">${name}</span>
+      <span class="spacer"></span><span class="fps">— fps</span></div><div class="models"></div>`;
+  const q=c=>t.querySelector(c);
+  const tile={video:q('video'),canvas:q('canvas'),status:q('.status'),fpsEl:q('.fps'),models:q('.models'),cur:s.models.slice(),hist:[]};
+  tile.models.innerHTML=MODELS.map(m=>`<button class="mbtn" data-m="${m.name}"
+      style="border-left:3px solid ${colorFor(m.name)}" onclick="toggleModel(${s.stream},'${m.name}')">${m.name}</button>`).join('');
+  document.getElementById('grid').appendChild(t);
+  tiles[s.stream]=tile; startVideo(tile.video,tile.status,s.url); syncBtns(s.stream,s.models);
+}
+function syncBtns(idx,cur){const t=tiles[idx];if(!t)return;t.cur=cur.slice();
+  t.models.querySelectorAll('.mbtn').forEach(b=>b.classList.toggle('on',cur.includes(b.dataset.m)));}
+async function toggleModel(idx,m){const t=tiles[idx];if(!t)return;
+  let cur=t.cur.includes(m)?t.cur.filter(x=>x!==m):t.cur.concat([m]);if(!cur.length)cur=[m];
+  syncBtns(idx,cur);
+  await fetch(`${API}/api/streams/${idx}/models`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({models:cur})});}
+async function applyAll(){const m=document.getElementById('allsel').value;
+  await fetch(`${API}/api/models_all`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({models:[m]})});}
+
+function draw(tile,objs){
+  const v=tile.video,c=tile.canvas,ctx=c.getContext('2d');
+  const sw=v.videoWidth||1280, sh=v.videoHeight||720;
+  if(c.width!==sw||c.height!==sh){c.width=sw;c.height=sh;}
+  ctx.clearRect(0,0,sw,sh);ctx.lineWidth=Math.max(2,sw/480);ctx.font=`${Math.max(12,sw/50)}px system-ui`;ctx.textBaseline='top';
+  for(const o of objs){const [x,y,w,h]=o.bbox;const col=colorFor(o.model||'');
+    ctx.strokeStyle=col;ctx.strokeRect(x,y,w,h);
+    const txt=`${o.label} ${(o.confidence*100).toFixed(0)}%`;const tw=ctx.measureText(txt).width+8,th=Math.max(14,sw/44);
+    ctx.fillStyle=col;ctx.fillRect(x,Math.max(0,y-th),tw,th);ctx.fillStyle='#03120f';ctx.fillText(txt,x+4,Math.max(0,y-th)+2);}
+}
+// render loop: draw the buffered detections from (now - syncMs) so boxes match the delayed video
+function renderLoop(){
+  const target=performance.now()-syncMs;
+  for(const idx in tiles){const t=tiles[idx];if(!t.video.videoWidth)continue;
+    let pick=null;for(let i=t.hist.length-1;i>=0;i--){if(t.hist[i].t<=target){pick=t.hist[i];break;}}
+    if(!pick&&t.hist.length)pick=t.hist[0];
+    draw(t,pick?pick.objs:[]);}
+  requestAnimationFrame(renderLoop);
+}
+async function poll(){
+  try{
+    const [streams,results]=await Promise.all([
+      fetch(`${API}/api/streams`).then(r=>r.json()),fetch(`${API}/api/results`).then(r=>r.json())]);
+    const now=performance.now();
+    for(const s of streams){const t=tiles[s.stream];if(!t)continue;
+      syncBtns(s.stream,s.models);t.fpsEl.textContent=`${s.fps} fps · ${s.mode}`;
+      const r=results[s.stream]||{};const objs=(r.data&&r.data.objects)||[];
+      t.hist.push({t:now,objs});if(t.hist.length>200)t.hist.shift();}
+  }catch(e){}
+}
+async function init(){
+  MODELS=await fetch(`${API}/api/models`).then(r=>r.json());
+  document.getElementById('allsel').innerHTML=MODELS.map(m=>`<option>${m.name}</option>`).join('');
+  document.getElementById('legend').innerHTML=MODELS.map(m=>`<span class="chip" style="background:${colorFor(m.name)}">${m.name}</span>`).join('');
+  const streams=await fetch(`${API}/api/streams`).then(r=>r.json());
+  const n=Math.min(streams.length,parseInt(document.getElementById('tilecount').value)||8);
+  document.getElementById('sub').textContent=`${streams.length} cameras · showing ${n} live · ${MODELS.length} models`;
+  document.getElementById('grid').innerHTML='';for(const k in tiles)delete tiles[k];
+  streams.slice(0,n).forEach(buildTile);
+}
+document.getElementById('tilecount').addEventListener('change',init);
+document.getElementById('sync').addEventListener('input',e=>{syncMs=+e.target.value;document.getElementById('syncv').textContent=(syncMs/1000).toFixed(1)+'s';});
+init(); setInterval(poll,200); requestAnimationFrame(renderLoop);
+</script></body></html>
