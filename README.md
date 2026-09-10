@@ -93,8 +93,9 @@ Other example configs in `configs/`:
 - `example-yolov6-multimodel.yaml` — YOLOv6 + YOLO26 loaded together, cameras
   routed per model (24 streams @ 5 fps).
 - `example-yolov6-dual.yaml` — YOLOv6n loaded as **two instances** with the
-  cameras split across them, reaching **~43 streams @ 5 fps** (vs ~30-36 on a
-  single YOLOv6n instance — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)).
+  cameras split across them, reaching the MLA ceiling of **~38 streams @ 5 fps**
+  (~189 fps, measured on-board; vs ~30-36 on a single YOLOv6n instance — see
+  [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)).
 
 ### 3. Run the host apps
 

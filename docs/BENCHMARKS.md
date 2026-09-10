@@ -75,14 +75,19 @@ the board reboots. Verified by holding load below the ceiling — 12 streams
 (60 fps) and 30 streams (150 fps) run with CMA flat for minutes; only demand
 above ~187 fps drains it.
 
-**Two YOLOv6n instances raise the ceiling to ~43 streams.** Loading YOLOv6n
-**twice** as two model instances and splitting the cameras across them reaches
-**~43 streams @ 5 fps**, up from ~30-36 with a single instance. The two instances
-give the MLA two independent pipelines to interleave, recovering scheduling
-headroom a single instance leaves idle. It is a pipelining gain, not extra
-compute, so it does not scale without bound — the aggregate MLA still sets the
-final limit — but the second instance is a cheap, real lift for a YOLOv6-only
-deployment (see `som/configs/example-yolov6-dual.yaml`).
+**Two YOLOv6n instances reach ~38 streams — the MLA ceiling, not more.** Loading
+YOLOv6n **twice** as two model instances and splitting the cameras across them
+lets it stably serve **~38 streams @ 5 fps (~189 fps)**, up from ~30-36 with a
+single instance. The two instances give the MLA two independent pipelines to
+interleave, recovering the last bit of scheduling headroom a single instance
+leaves idle — but that is a pipelining gain, not extra compute, so it only takes
+throughput up to the aggregate MLA ceiling (~187-190 fps) and no further. Measured
+on-board (2026-09-10, two YOLOv6n instances, 43-stream oversubscribed config): a
+stable **38/43 streams active at 188.6 fps**, CMA flat and 0 rebuilds over several
+minutes; the 5 overflow streams stay demand-starved at 0 fps because aggregate
+demand (215 fps) exceeds the ceiling. So the second instance is a modest, real
+lift for a YOLOv6-only deployment — enough to reach the MLA ceiling — but it does
+**not** reach 43 streams (see `som/configs/example-yolov6-dual.yaml`).
 
 **Other ways to run YOLOv6 at high density**: fewer streams, a lower source fps
 (decimate at the source, *not* via `target_fps`, which adds a CMA-draining
@@ -97,5 +102,6 @@ deployment (see `som/configs/example-yolov6-dual.yaml`).
    handful of cameras.
 4. **YOLOv6n** works but tops out around **30-36 streams @ 5 fps** (~187 fps MLA)
    with one instance; loading it as **two instances** and splitting the cameras
-   reaches **~43 streams**. Keep aggregate demand under the ceiling or route the
-   overflow to a faster model.
+   reaches the MLA ceiling of **~38 streams (~189 fps, measured on-board)** — a
+   modest lift, not the ~43 an oversubscribed config appears to ask for. Keep
+   aggregate demand under the ceiling or route the overflow to a faster model.
