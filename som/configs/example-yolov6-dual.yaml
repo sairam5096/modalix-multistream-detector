@@ -1,0 +1,67 @@
+# YOLOv6n dual-instance demo — ~38 streams @ 5 fps (measured MLA ceiling).
+#
+# Loads YOLOv6n TWICE as two model instances (coco-v6a, coco-v6b, same pack) and
+# splits the cameras across them. This reaches ~38 streams @ 5 fps (~189 fps), vs
+# ~30-36 with a single YOLOv6n instance: the two instances give the MLA two
+# independent pipelines to interleave, recovering the last bit of scheduling
+# headroom a single instance leaves idle. It is a pipelining gain (not extra
+# compute), so it only lifts throughput up to the aggregate MLA ceiling
+# (~187-190 fps) and no further — it does NOT reach 43 streams. Measured on-board
+# 2026-09-10: an oversubscribed 43-stream run held a stable 38 active at 188.6 fps
+# with CMA flat and 0 rebuilds; the overflow streams stayed demand-starved at 0.
+# 38 streams @ 5 fps = 190 fps of demand, right at the ceiling. See
+# docs/BENCHMARKS.md ("YOLOv6 throughput ceiling").
+#
+# Replace MEDIA_HOST with your RTSP server (e.g. a MediaMTX instance).
+models:
+  - {name: coco-v6a, description: "YOLOv6n int8 (instance A)", path: ../models/yolov6n_surgery_mpk.tar.gz, decode_type: yolov6, labels: coco_label.txt, min_score: 0.45}
+  - {name: coco-v6b, description: "YOLOv6n int8 (instance B)", path: ../models/yolov6n_surgery_mpk.tar.gz, decode_type: yolov6, labels: coco_label.txt, min_score: 0.45}
+default_models: [coco-v6a]
+streams:
+  # instance A — 19 cameras
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_13, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_14, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_15, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_16, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-v6a]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-v6a]}
+  # instance B — 19 cameras
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_07, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_08, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_09, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_10, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_11, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_12, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_13, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_14, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_15, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_16, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_01, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_02, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_03, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_04, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_05, models: [coco-v6b]}
+  - {url: rtsp://MEDIA_HOST:8554/stream_06, models: [coco-v6b]}
+# 720p, 5 fps sources. target_fps 0 = no decimation. Lean decoder = low CMA per stream.
+input: {width: 1280, height: 720, fps: 5, target_fps: 0, latency_ms: 100, decoder_buffers: 4, decoder_input_buffers: 1, decoder_tuning: low-memory}
+# max_inflight_per_stream is the key memory knob: keep it 1-2 for high stream counts.
+inference: {min_score: 0.45, nms_iou: 0.60, max_detections: 50, queue_depth: 2, internal_queue_depth: 1, max_inflight_per_stream: 2, max_inflight_total: 16}
+runtime: {watchdog_stall_s: 45, rebuild_retries: 4, report_hz: 10}
+control: {host: 0.0.0.0, port: 8600}
+crops: {enabled: false}

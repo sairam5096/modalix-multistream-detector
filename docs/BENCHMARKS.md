@@ -57,9 +57,51 @@ vs the Neat source) — the frames still land in CMA for the MLA.
   fast objects are caught. Accurate for the large majority; a fast object at
   5 fps can still be ~1 frame off.
 
+## 5. YOLOv6 throughput ceiling
+
+YOLOv6n runs in the shared multi-model framework via `decode_type: yolov6` (see
+`som/configs/example-yolov6-multimodel.yaml`) and detects correctly, but its MLA
+path is slower than YOLO26n, so it caps the stream count:
+
+| Model | MLA throughput (this SoM) | Usable @ 5 fps |
+|---|---|---|
+| YOLO26n INT8 | ~240 fps | 48 streams (240 fps demand) |
+| YOLOv6n INT8 | ~187 fps | ~30-36 streams (≤ ~180 fps demand) |
+
+Past the throughput ceiling the failure is **backpressure, not a leak**: decode
+keeps producing at the source rate while inference lags, so decoded frames pile
+up in CMA (measured drain ~7 MB/s at 48 streams) until the pool is exhausted and
+the board reboots. Verified by holding load below the ceiling — 12 streams
+(60 fps) and 30 streams (150 fps) run with CMA flat for minutes; only demand
+above ~187 fps drains it.
+
+**Two YOLOv6n instances reach ~38 streams — the MLA ceiling, not more.** Loading
+YOLOv6n **twice** as two model instances and splitting the cameras across them
+lets it stably serve **~38 streams @ 5 fps (~189 fps)**, up from ~30-36 with a
+single instance. The two instances give the MLA two independent pipelines to
+interleave, recovering the last bit of scheduling headroom a single instance
+leaves idle — but that is a pipelining gain, not extra compute, so it only takes
+throughput up to the aggregate MLA ceiling (~187-190 fps) and no further. Measured
+on-board (2026-09-10, two YOLOv6n instances, 43-stream oversubscribed config): a
+stable **38/43 streams active at 188.6 fps**, CMA flat and 0 rebuilds over several
+minutes; the 5 overflow streams stay demand-starved at 0 fps because aggregate
+demand (215 fps) exceeds the ceiling. So the second instance is a modest, real
+lift for a YOLOv6-only deployment — enough to reach the MLA ceiling — but it does
+**not** reach 43 streams (see `som/configs/example-yolov6-dual.yaml`).
+
+**Other ways to run YOLOv6 at high density**: fewer streams, a lower source fps
+(decimate at the source, *not* via `target_fps`, which adds a CMA-draining
+`videorate`), or route only some cameras to YOLOv6 and the rest to a faster model
+(as `example-yolov6-multimodel.yaml` does).
+
 ## Takeaways
 
 1. **Route, don't chain** for multiple models across cameras.
 2. To raise the stream ceiling, cut **in-flight decoder buffers**, not precision.
 3. **INT8** for throughput headroom; **BF16** for ~3.7 mAP more accuracy on a
    handful of cameras.
+4. **YOLOv6n** works but tops out around **30-36 streams @ 5 fps** (~187 fps MLA)
+   with one instance; loading it as **two instances** and splitting the cameras
+   reaches the MLA ceiling of **~38 streams (~189 fps, measured on-board)** — a
+   modest lift, not the ~43 an oversubscribed config appears to ask for. Keep
+   aggregate demand under the ceiling or route the overflow to a faster model.
