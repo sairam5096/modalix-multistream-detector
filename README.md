@@ -88,6 +88,14 @@ Put your compiled model packs in `models/` (see [`models/README.md`](models/READ
 curl http://localhost:8600/api/streams        # 48 streams, live fps
 ```
 
+Other example configs in `configs/`:
+- `example-12x30fps-crops.yaml` — 12 streams @ 30 fps with on-SoM exact crops.
+- `example-yolov6-multimodel.yaml` — YOLOv6 + YOLO26 loaded together, cameras
+  routed per model (24 streams @ 5 fps).
+- `example-yolov6-dual.yaml` — YOLOv6n loaded as **two instances** with the
+  cameras split across them, reaching **~43 streams @ 5 fps** (vs ~30-36 on a
+  single YOLOv6n instance — see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)).
+
 ### 3. Run the host apps
 
 ```bash
