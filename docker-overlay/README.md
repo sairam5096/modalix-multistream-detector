@@ -9,14 +9,15 @@ fps, resolution and model can be changed per stream at run time by re-creating t
 
 | Item | Value |
 |---|---|
-| Streams per container | 1 |
-| Containers tested on one DevKit | 16 at 720p, 5 fps |
+| Streams per container | 1 by default, several with repeated `--url` |
+| Stable, soak-proven | 16 containers of 1 stream, 720p at 5 fps, 8 h under fault injection |
+| Most streams on one DevKit | 28, with 4 or 8 streams per container (3-minute check only) |
 | Soak 1, first version | 18 h 24 min, fault every 20 min: 99.93% availability, but about 6 self-relaunches per hour |
-| Soak 2, buffer-reuse fix | 4 h 20 min so far, fault every 20 min: 100% availability, 0 allocation errors |
-| Injected faults recovered | 47 of 47 in soak 1, 11 of 11 in soak 2, neighbours never affected |
+| Soak 2, buffer-reuse fix | 8 h 05 min, fault every 20 min: 100% availability, 0 allocation errors, 0 unplanned restarts |
+| Injected faults recovered | 47 of 47 in soak 1, 21 of 21 in soak 2, neighbours never affected |
 | Per-frame app cost (C++) | about 7.5 ms (NV12 to BGR 3 ms, draw 1.6 ms, push 2.8 ms) |
 | Per-container footprint | about 230 MB RAM, about 45 MB pinned CMA plus 19 MB codec memory, about 45% of one core |
-| Next limit past 16 | RAM, about 0.7 GB available at 16 containers |
+| Limits | one stream per container: RAM at 18. Grouped: CMA and CPU at 28 |
 
 ## What one container does
 
@@ -60,6 +61,7 @@ models) are read-only bind mounts from the board, so 16 containers add no storag
 | `docker/recreate.sh` | change parameters of one running stream (model, fps, resolution) |
 | `docker/demo.env.example` | addresses and paths, copy to `demo.env` |
 | `test/scale_sweep.sh` | add containers one at a time until a health rule trips |
+| `test/combo_sweep.sh`, `test/combo_matrix.sh` | find the most total streams for K streams per container, reboot between K values |
 | `test/endurance.sh` | unattended soak with fault injection and full log capture |
 
 Model packs are not shipped. Put the default pack at `docker/models/yolo26n-det-int8-b1.tar.gz` and any extra packs
@@ -84,6 +86,15 @@ docker build -t neat-overlay:mounted .
 ./run_overlay.sh 1 rtsp://MEDIA_HOST:8554/cam01 0 --fps 5
 ./run_overlay.sh 2 rtsp://MEDIA_HOST:8554/cam02 1 --fps 5 --decode yolov6 --model models2/yolov6n_mpk.tar.gz
 ```
+
+Several streams in one container: repeat `--url`. Channels count up from `--channel`.
+
+```
+./run_overlay.sh 1 rtsp://MEDIA_HOST:8554/cam01 0 --fps 5 --url rtsp://MEDIA_HOST:8554/cam02 --url rtsp://MEDIA_HOST:8554/cam03
+```
+
+Each stream is an independent pipeline (own decoder, model session, encoder, buffer ring) in one process. If any
+pipeline ends, the process exits and Docker relaunches the whole container.
 
 Start containers one at a time with a gap of about 15 s. The MLA does not like rapid load and unload cycles.
 
@@ -177,24 +188,28 @@ The first version allocated a fresh hardware buffer for every frame. At 16 conta
 The ring is filled through `Tensor::map_write()`. The encoded output was captured on the host and checked for tearing
 and stale frames: none. Push cost dropped from 4.3 ms to 2.8 ms per frame.
 
-### Soak 2: with the fix, 16 containers all on YOLOv6n, 720p at 5 fps, in progress
+### Soak 2: with the fix, 16 containers all on YOLOv6n, 720p at 5 fps, 8 h 05 min
 
-Started after a clean reboot. Numbers at 4 h 20 min.
+Started after a clean reboot.
 
-| Metric | Soak 1 at the same point | Soak 2 |
+| Metric | Soak 1 (before the fix) | Soak 2 (after the fix) |
 |---|---|---|
-| Containers up | 16 of 16 | 16 of 16 |
-| CMA allocation errors | about 25 | 0 |
+| Containers up | 16 of 16 | 16 of 16 at all 441 samples |
+| CMA allocation errors | about 6 per hour | 0 |
 | Allocation retries / dropped frames | not applicable | 0 / 0 |
-| Unplanned relaunches | about 25 | 1 |
-| Video availability | 99.9% | 100% on every channel |
-| Injected faults recovered | all | 11 of 11 |
-| RAM in use | 5.0 GB | 5.13 to 5.21 GB, flat |
-| Pinned CMA | about 460 MB | 666 MB, flat (the buffer rings stay allocated) |
-| SoC temperature | 47 to 52 °C | 51 to 54 °C |
+| Unplanned relaunches | about 100 | 0 |
+| Video availability | 99.93% | 100% on every channel |
+| Injected faults recovered | 47 of 47 | 21 of 21 |
+| RAM in use | 4.7 to 5.1 GB | 5.13 to 5.21 GB, flat |
+| Pinned CMA | about 460 MB | 648 to 666 MB, flat (the buffer rings stay allocated) |
+| SoC temperature | 46 to 52 °C | 50 to 54 °C |
 
-The one unplanned relaunch was a hardware decoder stage failure on one container after a 20 s input stall. It was not
-memory related, the container was streaming again 9 s later, and the cause is not yet identified.
+All 10 relaunches in soak 2 were caused by the test: 4 injected crashes, 4 camera outages, and 2 decoder failures at the
+unpause moment of the 20 s freeze action. After a 20 s process freeze the hardware decoder re-opens and can fail to
+re-initialise, the app exits and is streaming again within 9 s. One of three freezes survived without a relaunch.
+
+Tip: the board clock can drift from the host clock (7 min 48 s here). Apply the offset before correlating container
+logs with harness events.
 
 ### Hardware encoder or CPU encoder
 
@@ -211,6 +226,41 @@ to 15 other running containers:
 Each CPU-encoded stream saves about 22 MB of CMA and costs about 16% of a core and 56 MB of RAM. RAM is the next
 limit, so use it as a fallback for a few streams, not for all of them. Power was not measured, the DevKit has no
 power sensor.
+
+## How many streams per container
+
+Same app, YOLOv6n, 720p at 5 fps, clean reboot before each group size, containers added until a stop rule tripped,
+then a 3-minute steady check.
+
+```
+ K=1 :  [s1] [s2] [s3] ...            best isolation
+ K=4 :  [s1..s4] [s5..s8] ...
+ K=8 :  [s1..s8] [s9..s16] ...        fewest processes, a failure restarts 8 streams
+```
+
+| Streams per container | Containers | Max total streams | CPU idle at max | Limit hit |
+|---|---|---|---|---|
+| 1 | 18 | 18 | 31 to 42% | RAM, about 250 MB per container |
+| 2 | 13 | 26 | about 11% | RAM, with CPU close behind |
+| 4 | 7 | **28** | about 9% | CMA and CPU |
+| 8 | 3, plus one of 4 | **28** | 9 to 12% | CMA and CPU |
+| 16 | 1, plus one of 8 | 24 | 20% | a second group of 16 does not fit |
+
+- Grouping cuts RAM per stream from about 250 MB to about 55 MB, because streams share one process. RAM stops being the
+  limit and CMA plus CPU take over.
+- At 28 streams the pinned hardware buffers total about 1690 MB of the 1788 MB CMA region, about 60 MB per stream.
+- **Overload is not graceful.** Twice, a failed start beyond capacity (towards 32 streams) left the whole board degraded:
+  no video on any channel and 84% system CPU time, cleared only by a reboot. Cap the stream count below the CMA ceiling.
+- 28 is a ceiling from a 3-minute check, not a soak-proven operating point. 24 streams (3 containers of 8, or 6 of 4)
+  leaves about 20% CPU idle and is the suggested target, pending its own soak.
+- The first container after a reboot usually fails its first RTSP connect and is relaunched once by Docker. A sweep rule
+  must not count that as a failure.
+
+| | 1 per container | 4 to 8 per container |
+|---|---|---|
+| Max streams | 18 | 28 |
+| Blast radius of one failure | 1 stream | 4 to 8 streams restart together |
+| Status | 16 proven over 8 h | ceiling measured, soak pending |
 
 ## Notes
 

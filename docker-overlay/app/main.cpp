@@ -22,6 +22,8 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,7 @@ namespace {
 
 struct Args {
   std::string url;
+  std::vector<std::string> urls;  // several --url = several independent pipelines in this process (channel, channel+1, ...)
   int channel = 0;
   std::string host = "127.0.0.1";
   int fps = 5, width = 1280, height = 720;
@@ -61,7 +64,7 @@ Args parse(int argc, char** argv) {
   };
   for (int i = 1; i < argc; ++i) {
     std::string k = argv[i];
-    if (k == "--url") a.url = next(i);
+    if (k == "--url") { a.url = next(i); a.urls.push_back(a.url); }
     else if (k == "--channel") a.channel = std::stoi(next(i));
     else if (k == "--host") a.host = next(i);
     else if (k == "--fps") a.fps = std::stoi(next(i));
@@ -149,11 +152,13 @@ void draw(cv::Mat& bgr, const std::vector<objdet::Box>& boxes, const std::vector
 
 }  // namespace
 
-int main(int argc, char** argv) try {
-  const Args a = parse(argc, argv);
+std::mutex g_build_mu;  // graph builds are serialized across the pipelines of one process
+std::mutex g_log_mu;
+
+int run_stream(const Args a) try {
   const int W = a.width, H = a.height, FPS = a.fps;
   const auto labels = load_labels(a.labels);
-  auto log = [&](const std::string& m) { std::cout << "[overlay-cpp ch" << a.channel << "] " << m << std::endl; };
+  auto log = [&](const std::string& m) { std::lock_guard<std::mutex> lk(g_log_mu); std::cout << "[overlay-cpp ch" << a.channel << "] " << m << std::endl; };
 
   // ---------------- source: encoded RTSP -> SiMa decoder (lean settings)
   neat::nodes::groups::RtspEncodedInputOptions enc;
@@ -224,6 +229,7 @@ int main(int argc, char** argv) try {
   ro.overflow_policy = neat::OverflowPolicy::KeepLatest;
   ro.output_memory = neat::OutputMemory::ZeroCopy;
   log("building detector graph for " + a.url);
+  std::unique_lock<std::mutex> build_lk(g_build_mu);
   neat::Run run = graph.build(ro);
   log("detector running");
 
@@ -262,6 +268,7 @@ int main(int argc, char** argv) try {
   }
   cv::Mat seed(H, W, CV_8UC3, cv::Scalar(0, 0, 0));
   neat::Run sender = egress.build(neat::TensorList{neat::Tensor::from_cv_mat(seed, neat::ImageSpec::PixelFormat::BGR, push_mem)});
+  build_lk.unlock();
   log("encoder (" + a.encoder + ") running -> Insight " + a.host + " video port " + std::to_string(video_port) + " bitrate " + std::to_string(a.bitrate) + " kbps");
 
   // ---------------- main loop: pair frames and detections by frame_id (tolerates dropped frames)
@@ -432,4 +439,26 @@ int main(int argc, char** argv) try {
 } catch (const std::exception& e) {
   std::cerr << "[ERR] " << e.what() << std::endl;
   return 1;
+}
+
+int main(int argc, char** argv) {
+  Args a;
+  try { a = parse(argc, argv); } catch (const std::exception& e) { std::cerr << "[ERR] " << e.what() << std::endl; return 1; }
+  if (a.urls.size() <= 1) return run_stream(a);
+  // Multi-stream container: N independent pipelines (own decoder, model session, encoder) in one process.
+  // If any pipeline ends, the whole process exits so the container restart policy relaunches all of them.
+  std::vector<std::thread> threads;
+  for (std::size_t i = 0; i < a.urls.size(); ++i) {
+    Args s = a;
+    s.url = a.urls[i];
+    s.channel = a.channel + static_cast<int>(i);
+    threads.emplace_back([s] {
+      const int rc = run_stream(s);
+      std::cout << "[overlay-cpp ch" << s.channel << "] pipeline ended rc=" << rc << "; exiting process for relaunch" << std::endl;
+      ::_exit(rc ? rc : 2);
+    });
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+  }
+  for (auto& t : threads) t.join();
+  return 2;
 }
