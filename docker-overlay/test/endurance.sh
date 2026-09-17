@@ -114,7 +114,7 @@ EOF
 }
 
 # ---------- chaos / monkey actions (rotating; one container at a time, MLA-friendly pacing) ----------
-VARIANTS=(default yolov6n fps10 res360 default yolov6n)
+read -r -a VARIANTS <<<"${VARIANTS_LIST:-default yolov6n fps10 res360 default yolov6n}"
 capture_before() { bssh "mkdir -p /data/endurance_logs; { echo \"===== \$(date -u +%FT%TZ) $1 before chaos: $2\"; docker logs -t --tail 200 $1 2>&1; } >> /data/endurance_logs/$1.log"; }
 chaos() {
   local i=$1

@@ -13,7 +13,10 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <thread>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -45,6 +48,9 @@ struct Args {
   double stall_exit_s = 60.0;
   std::string save_frame;
   int max_lag = 3;
+  std::string encoder = "hw"; // hw = SiMa H.264 encoder (EV74/CMA buffers), sw = CPU x264/openh264 (no CMA)
+  int push_pool = 4;        // reusable EV74 encoder-input tensors (0 = allocate one per frame)
+  int alloc_retry_ms = 1000; // how long to retry a failed DMA-BUF allocation before dropping the frame
 };
 
 Args parse(int argc, char** argv) {
@@ -77,6 +83,9 @@ Args parse(int argc, char** argv) {
     else if (k == "--video-port-base") a.video_port_base = std::stoi(next(i));
     else if (k == "--stall-exit-s") a.stall_exit_s = std::stod(next(i));
     else if (k == "--save-frame") a.save_frame = next(i);
+    else if (k == "--encoder") a.encoder = next(i);
+    else if (k == "--push-pool") a.push_pool = std::stoi(next(i));
+    else if (k == "--alloc-retry-ms") a.alloc_retry_ms = std::stoi(next(i));
     else if (k == "--max-lag") a.max_lag = std::stoi(next(i));
     else throw std::runtime_error("unknown option " + k);
   }
@@ -219,6 +228,8 @@ int main(int argc, char** argv) try {
   log("detector running");
 
   // ---------------- egress: BGR frames -> RGB EV74 tensors -> HW H.264 -> RTP -> Insight
+  const bool sw_enc = (a.encoder == "sw");
+  const auto push_mem = sw_enc ? neat::TensorMemory::CPU : neat::TensorMemory::EV74;
   neat::InputOptions io;
   io.payload_type = neat::PayloadType::Image;
   io.format = "BGR";
@@ -227,18 +238,31 @@ int main(int argc, char** argv) try {
   io.depth = 3;
   io.fps_n = FPS;
   io.fps_d = 1;
-  io.memory_policy = neat::InputMemoryPolicy::Ev74;
-  auto so = neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(W, H, FPS);
-  so.host = a.host;
-  so.channel = a.channel;
-  so.video_port_base = a.video_port_base;
-  so.encoder.bitrate_kbps = a.bitrate;
+  io.memory_policy = sw_enc ? neat::InputMemoryPolicy::SystemMemory : neat::InputMemoryPolicy::Ev74;
   neat::Graph egress("insight");
   egress.add(neat::nodes::Input(io));
-  egress.add(neat::nodes::groups::VideoSender(so));
+  int video_port = a.video_port_base + a.channel;
+  if (sw_enc) {
+    // CPU path: no EV74/CMA buffers at all. BGR -> I420 -> x264/openh264 -> RTP -> UDP
+    egress.add(neat::nodes::VideoConvert());
+    egress.add(neat::nodes::H264EncodeSW(a.bitrate));
+    egress.add(neat::nodes::H264Packetize());
+    neat::UdpOutputOptions uo;
+    uo.host = a.host;
+    uo.port = video_port;
+    egress.add(neat::nodes::UdpOutput(uo));
+  } else {
+    auto so = neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(W, H, FPS);
+    so.host = a.host;
+    so.channel = a.channel;
+    so.video_port_base = a.video_port_base;
+    so.encoder.bitrate_kbps = a.bitrate;
+    video_port = so.video_port();
+    egress.add(neat::nodes::groups::VideoSender(so));
+  }
   cv::Mat seed(H, W, CV_8UC3, cv::Scalar(0, 0, 0));
-  neat::Run sender = egress.build(neat::TensorList{neat::Tensor::from_cv_mat(seed, neat::ImageSpec::PixelFormat::BGR, neat::TensorMemory::EV74)});
-  log("encoder running -> Insight " + a.host + " video port " + std::to_string(so.video_port()) + " bitrate " + std::to_string(a.bitrate) + " kbps");
+  neat::Run sender = egress.build(neat::TensorList{neat::Tensor::from_cv_mat(seed, neat::ImageSpec::PixelFormat::BGR, push_mem)});
+  log("encoder (" + a.encoder + ") running -> Insight " + a.host + " video port " + std::to_string(video_port) + " bitrate " + std::to_string(a.bitrate) + " kbps");
 
   // ---------------- main loop: pair frames and detections by frame_id (tolerates dropped frames)
   std::map<int64_t, cv::Mat> pending_frames;
@@ -250,6 +274,34 @@ int main(int argc, char** argv) try {
   const double t0 = now_s();
   double last_report = t0, last_frame = t0;
   bool saved = false;
+  std::uint64_t alloc_retries = 0, dropped = 0;
+  int alloc_fail_logged = 0, push_err_logged = 0;
+
+  // Encoder-input tensors. Allocating a fresh EV74 (CMA) tensor per frame fails now and then when CMA is nearly
+  // full (page cache must be migrated out first), so keep a small ring of tensors and overwrite them in place.
+  // If a tensor cannot be mapped, or the pool is disabled, fall back to per-frame allocation with retries.
+  const auto BGRF = neat::ImageSpec::PixelFormat::BGR;
+  auto alloc_with_retry = [&](const cv::Mat& m, neat::Tensor& out) -> bool {
+    const double t_end = now_s() + a.alloc_retry_ms / 1000.0;
+    int tries = 0;
+    while (true) {
+      try { out = neat::Tensor::from_cv_mat(m, BGRF, push_mem); return true; }
+      catch (const std::exception& e) {
+        ++tries; ++alloc_retries;
+        if (now_s() >= t_end) { if (alloc_fail_logged++ < 20) log(std::string("EV74 alloc failed after ") + std::to_string(tries) + " tries: " + e.what()); return false; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::min(5 * tries, 50)));
+      }
+    }
+  };
+  std::vector<neat::Tensor> pool;
+  for (int i = 0; i < (sw_enc ? 0 : a.push_pool); ++i) {
+    neat::Tensor t;
+    if (!alloc_with_retry(seed, t)) break;
+    pool.push_back(std::move(t));
+  }
+  bool pool_ok = !pool.empty();
+  std::size_t pool_i = 0;
+  log("encoder input pool: " + std::to_string(pool.size()) + " reusable EV74 tensors");
 
   auto render_and_push = [&](cv::Mat& bgr, const std::vector<objdet::Box>& bx) {
     const double b = now_s();
@@ -260,7 +312,26 @@ int main(int argc, char** argv) try {
       log("saved annotated frame to " + a.save_frame);
     }
     const double c = now_s();
-    const bool ok = sender.push(neat::TensorList{neat::Tensor::from_cv_mat(bgr, neat::ImageSpec::PixelFormat::BGR, neat::TensorMemory::EV74)});
+    bool ok = false;
+    try {
+      neat::Tensor t;
+      bool have = false;
+      if (pool_ok && bgr.isContinuous()) {
+        neat::Tensor& slot = pool[pool_i % pool.size()];
+        const std::size_t need = static_cast<std::size_t>(W) * H * 3;
+        try {
+          auto m = slot.map_write();
+          if (m.data && m.size_bytes >= need) { std::memcpy(m.data, bgr.data, need); have = true; }
+        } catch (const std::exception& e) { log(std::string("pool map failed, using per-frame allocation: ") + e.what()); }
+        if (have) { t = slot; ++pool_i; } else { pool_ok = false; }
+      }
+      if (!have) have = alloc_with_retry(bgr, t);
+      if (have) ok = sender.push(neat::TensorList{t});
+      else ++dropped;
+    } catch (const std::exception& e) {
+      if (push_err_logged++ < 20) log(std::string("push exception (frame dropped): ") + e.what());
+      ++dropped;
+    }
     const double d = now_s();
     t_draw += c - b;
     t_push += d - c;
@@ -345,13 +416,14 @@ int main(int argc, char** argv) try {
     }
     const double now = now_s();
     if (now - last_report >= 10) {
-      char buf[256];
+      char buf[384];
       std::snprintf(buf, sizeof buf,
-                    "frames=%llu pushed=%llu unpaired=%llu fps=%.2f avg_boxes=%.2f nv12->bgr=%.1fms draw+rgb=%.1fms push=%.1fms pend=%zu",
+                    "frames=%llu pushed=%llu unpaired=%llu fps=%.2f avg_boxes=%.2f nv12->bgr=%.1fms draw+rgb=%.1fms push=%.1fms pend=%zu alloc_retries=%llu dropped=%llu",
                     (unsigned long long)frames, (unsigned long long)pushed, (unsigned long long)unpaired,
                     win / (now - last_report), frames ? double(boxes_total) / frames : 0.0,
                     1000 * t_conv / std::max<std::uint64_t>(1, frames), 1000 * t_draw / std::max<std::uint64_t>(1, pushed),
-                    1000 * t_push / std::max<std::uint64_t>(1, pushed), pending_frames.size());
+                    1000 * t_push / std::max<std::uint64_t>(1, pushed), pending_frames.size(),
+                    (unsigned long long)alloc_retries, (unsigned long long)dropped);
       log(buf);
       last_report = now;
       win = 0;

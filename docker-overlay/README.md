@@ -11,12 +11,12 @@ fps, resolution and model can be changed per stream at run time by re-creating t
 |---|---|
 | Streams per container | 1 |
 | Containers tested on one DevKit | 16 at 720p, 5 fps |
-| Soak | 18 h 24 min with a fault injected every 20 min |
-| Video availability | 99.93% overall, worst channel 99.80% |
-| Injected faults recovered | 47 of 47, neighbours never affected |
-| Per-frame app cost (C++) | about 9 ms (NV12 to BGR 3 ms, draw 1.6 ms, push 4.3 ms) |
-| Per-container footprint | about 280 MB RAM, about 47 MB pinned CMA, about 37% of one core |
-| Limit at 16 | contiguous memory (CMA), see "Known limit" |
+| Soak 1, first version | 18 h 24 min, fault every 20 min: 99.93% availability, but about 6 self-relaunches per hour |
+| Soak 2, buffer-reuse fix | 4 h 20 min so far, fault every 20 min: 100% availability, 0 allocation errors |
+| Injected faults recovered | 47 of 47 in soak 1, 11 of 11 in soak 2, neighbours never affected |
+| Per-frame app cost (C++) | about 7.5 ms (NV12 to BGR 3 ms, draw 1.6 ms, push 2.8 ms) |
+| Per-container footprint | about 230 MB RAM, about 45 MB pinned CMA plus 19 MB codec memory, about 45% of one core |
+| Next limit past 16 | RAM, about 0.7 GB available at 16 containers |
 
 ## What one container does
 
@@ -97,6 +97,9 @@ App arguments:
 | `--bitrate`, `--min-score` | 2000 kbps, 0.30 | encoder bitrate, score threshold |
 | `--dec-bufs`, `--dec-in-bufs`, `--dec-tuning`, `--dec-memopt` | 4, 2, low-memory, 1 | lean decoder pools, the settings that made 16 fit |
 | `--out-q`, `--mla-pool` | 2, runtime default | output queue depth, MLA output pool |
+| `--push-pool` | 4 | ring of reusable encoder input buffers, 0 allocates one per frame (old behaviour) |
+| `--alloc-retry-ms` | 1000 | how long to retry a failed buffer allocation before dropping that frame |
+| `--encoder` | hw | `hw` = SiMa H.264 encoder, `sw` = x264 on the CPU, no CMA used on the egress side |
 | `--stall-exit-s` | 60 | exit when no frames arrive, so Docker relaunches the stream |
 | `--save-frame` | off | write one annotated JPEG for a visual check |
 
@@ -121,7 +124,9 @@ test/endurance.sh stop
 The camera outage action freezes the ffmpeg publisher of the chosen stream, so it only works when the harness runs
 on the machine that publishes the streams.
 
-## Results: 16 containers, 720p at 5 fps, 18 h 24 min
+## Results
+
+### Soak 1: first version, 16 containers, 720p at 5 fps, 18 h 24 min
 
 12 containers ran YOLO26n int8 and 4 ran YOLOv6n.
 
@@ -145,7 +150,7 @@ on the machine that publishes the streams.
 | Freeze, 20 s | 8 | 8 | 0 |
 | **Total** | **47** | **47** | **0** |
 
-## Known limit: CMA at 16 containers
+### The problem soak 1 exposed, and the fix
 
 ```
  CMA region (about 1.8 GB)
@@ -157,15 +162,55 @@ on the machine that publishes the streams.
    -> allocation fails -> app exits -> Docker relaunches it in about 8 s
 ```
 
-At 16 containers a per-frame DMA-BUF allocation fails about 6 times per hour. The app exits and Docker relaunches it
-in about 8 s. It is not a leak, pinned buffers stayed flat for the whole run. Expect about 14 containers to run
-without self-relaunches. Planned fixes:
+The first version allocated a fresh hardware buffer for every frame. At 16 containers that allocation failed about
+6 times per hour, the app exited and Docker relaunched it. It was not a leak, pinned buffers stayed flat.
 
-| Fix | Effort | Where |
+```
+ before:  every frame -> allocate new CMA buffer -> copy image in -> push to encoder -> free
+                              ^ fails when CMA is full -> exception -> app exits
+
+ after:   start-up    -> allocate 4 buffers once
+          every frame -> pick next of the 4 -> map, copy image in -> push to encoder
+          fallback    -> retry allocation for up to 1 s, then drop that one frame, never exit
+```
+
+The ring is filled through `Tensor::map_write()`. The encoded output was captured on the host and checked for tearing
+and stale frames: none. Push cost dropped from 4.3 ms to 2.8 ms per frame.
+
+### Soak 2: with the fix, 16 containers all on YOLOv6n, 720p at 5 fps, in progress
+
+Started after a clean reboot. Numbers at 4 h 20 min.
+
+| Metric | Soak 1 at the same point | Soak 2 |
 |---|---|---|
-| Reuse the encoder buffer, or retry on failure instead of exiting | small | `app/main.cpp` |
-| Drop the page cache periodically | small | board cron job |
-| Enlarge the CMA reservation | medium | device tree, needs reboot |
+| Containers up | 16 of 16 | 16 of 16 |
+| CMA allocation errors | about 25 | 0 |
+| Allocation retries / dropped frames | not applicable | 0 / 0 |
+| Unplanned relaunches | about 25 | 1 |
+| Video availability | 99.9% | 100% on every channel |
+| Injected faults recovered | all | 11 of 11 |
+| RAM in use | 5.0 GB | 5.13 to 5.21 GB, flat |
+| Pinned CMA | about 460 MB | 666 MB, flat (the buffer rings stay allocated) |
+| SoC temperature | 47 to 52 °C | 51 to 54 °C |
+
+The one unplanned relaunch was a hardware decoder stage failure on one container after a 20 s input stall. It was not
+memory related, the container was streaming again 9 s later, and the cause is not yet identified.
+
+### Hardware encoder or CPU encoder
+
+`--encoder sw` encodes with x264 on the CPU and uses no CMA on the egress side. One 720p 5 fps stream, measured next
+to 15 other running containers:
+
+| | Hardware encoder | CPU encoder (x264) |
+|---|---|---|
+| Container CPU, % of one core | 43 to 45 | 60 to 62 |
+| Container RAM | 231 MB | 287 MB |
+| Pinned CMA plus codec memory | 64 MB | 42 MB |
+| Output | clean | clean, slightly softer |
+
+Each CPU-encoded stream saves about 22 MB of CMA and costs about 16% of a core and 56 MB of RAM. RAM is the next
+limit, so use it as a fallback for a few streams, not for all of them. Power was not measured, the DevKit has no
+power sensor.
 
 ## Notes
 

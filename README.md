@@ -141,7 +141,7 @@ The host apps proxy these, so the browser talks to one origin.
 
 [docker-overlay/](docker-overlay/) runs one Docker container per camera stream, draws the detection overlay on the
 SOM and sends hardware-encoded video to the viewer. 16 containers ran for 18 hours under fault injection with 99.93%
-video availability. See [docker-overlay/README.md](docker-overlay/README.md).
+video availability, and a buffer-reuse fix then removed the self-relaunches seen in that run. See [docker-overlay/README.md](docker-overlay/README.md).
 
 ## License
 
