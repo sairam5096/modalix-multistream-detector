@@ -137,6 +137,12 @@ The host apps proxy these, so the browser talks to one origin.
   app covers all 48 by matching each detection's `pts_ns` to a locally decoded
   frame (content-aware selection for fast movers).
 
+## Docker overlay demo (one container per stream)
+
+[docker-overlay/](docker-overlay/) runs one Docker container per camera stream, draws the detection overlay on the
+SOM and sends hardware-encoded video to the viewer. 16 containers ran for 18 hours under fault injection with 99.93%
+video availability. See [docker-overlay/README.md](docker-overlay/README.md).
+
 ## License
 
 Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Not an official

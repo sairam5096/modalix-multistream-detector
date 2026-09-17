@@ -14,3 +14,4 @@ __pycache__/
 *.pyc
 # labels file (ship your own)
 coco_label.txt
+docker-overlay/docker/demo.env

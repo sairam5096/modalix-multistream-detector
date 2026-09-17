@@ -2,7 +2,9 @@ modalix-multistream-detector
 
 The on-device detector (som/) is derived from the SiMa "sima-neat/apps"
 examples (examples/object-detection/high-density-multi-stream-object-detector),
-which are licensed under the Apache License, Version 2.0.
+which are licensed under the Apache License, Version 2.0. The Docker overlay
+demo (docker-overlay/) includes box-parsing helpers copied from the same
+repository (support/object_detection) in docker-overlay/app/support/.
 
   https://github.com/sima-neat/apps
 
