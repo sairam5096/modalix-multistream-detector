@@ -1,0 +1,17 @@
+Vendored SiMa.ai model-conversion toolchain
+===========================================
+
+This directory contains the SiMa.ai Ultralytics/YOLO -> Modalix conversion
+scripts (the `model_surgery` package + `convert.py` / `convert_int8.py` /
+`quantize_compile.py`), vendored here so the surgery -> quantize -> compile flow
+can be run directly inside the SiMa `sima-neat` SDK container without a separate
+toolchain package.
+
+- These scripts drive the SiMa **ModelSDK** (`afe`), which is NOT included here.
+  The compile step (`quantize_compile.py`) requires the ModelSDK to be importable
+  in the environment you run it in (the `sima-neat` / Model Compiler container
+  provides it). The surgery step (`model_surgery`) needs only `onnx` / `numpy`.
+- Distributed as part of this repository under its Apache-2.0 LICENSE.
+- Source of truth: the SiMa Modalix SDK conversion toolchain. Prefer the SDK's
+  own copy when you have it; this vendored copy is a convenience so a customer
+  without the standalone package can still run the flow in `sima-neat`.
