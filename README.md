@@ -57,7 +57,11 @@ host/                host-side web apps (Python stdlib + OpenCV + PyAV)
   crops/             crops_host48.py + gallery.html + control.html (:8092)
   systemd/           user-service unit files
 models/              (empty) — bring your own compiled packs; see models/README.md
-docs/                architecture, model-switching, benchmarks, diagram
+  identify_model.py  inspect a pack: family / class count / labels + config line
+tools/surgery/       convert your own YOLO ONNX -> deployable pack (one command)
+  surger.sh          surgery -> quantize -> compile, run inside the sima-neat container
+  toolchain/         the vendored SiMa conversion scripts it runs
+docs/                architecture, model-switching, benchmarks, MODEL_SURGERY, diagram
 ```
 
 ---
@@ -108,6 +112,33 @@ python3 host/crops/crops_host48.py  # crops + panel -> http://<host>:8092
 
 (Or install the `host/systemd/*.service` units for boot persistence — set the
 `SOM_API` IP first.)
+
+---
+
+## Convert your own model (surgery → pack)
+
+Bring a YOLO ONNX (v6/v8/v9/v10/v11/26/x, any class count) and get a deployable
+Modalix pack with **one command** — run it **inside the SiMa `sima-neat`
+container** (which provides the ModelSDK the compile step needs); no extra
+package to install, the conversion scripts are vendored in
+[`tools/surgery/toolchain/`](tools/surgery/toolchain/):
+
+```bash
+# inside sima-neat:
+./tools/surgery/surger.sh your_yolov6.onnx --calib your_images/ --name my-v6
+```
+
+It runs **graph surgery → int8 quantize + compile → verify**, and writes
+`my-v6_surgery_mpk.tar.gz` + a matching `labels.txt` + the ready-to-paste
+`models:` line. Drop the pack in `models/` and route cameras to it.
+
+Surgery is the throughput lever for YOLOv6 specifically: a stock export runs its
+decode tail on the A65 CPU (~30 fps/pipeline), while a surgered model runs the
+whole graph on the MLA (**~119 fps/pipeline, ~2.4×**) with **identical detections**
+(verified numerically lossless host-side). Why + the recipe:
+[`docs/MODEL_SURGERY.md`](docs/MODEL_SURGERY.md). Inspect any existing pack with
+[`models/identify_model.py`](models/identify_model.py). Steps + options:
+[`tools/surgery/README.md`](tools/surgery/README.md).
 
 ---
 
