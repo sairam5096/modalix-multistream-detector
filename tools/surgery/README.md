@@ -5,7 +5,9 @@
 `identify_model.py` (in [`../../models/`](../../models/)) *reads* a pack; it does
 **not** create one. This directory is the other half: an automated
 `ONNX → graph surgery → quantize + compile → pack` pipeline, wrapped so the whole
-thing is one command.
+thing is one command — and the conversion scripts are **vendored right here** in
+[`toolchain/`](toolchain/), so you run them **inside the SiMa `sima-neat`
+container** with no separate package to install.
 
 See [`../../docs/MODEL_SURGERY.md`](../../docs/MODEL_SURGERY.md) for *why* surgery
 matters (it's the ~2.4× throughput lever for YOLOv6). This file is *how* to run it.
@@ -16,34 +18,27 @@ matters (it's the ~2.4× throughput lever for YOLOv6). This file is *how* to run
 your_model.onnx (or .pt)
    │
    ▼  1. graph surgery        splits the fused decode tail into raw per-stride
-   │      (model_surgery)       heads  bbox_{0,1,2} + class_prob_{0,1,2}, writes
+   │      (toolchain/model_surgery)  heads bbox_{0,1,2} + class_prob_{0,1,2}, writes
    │                            boxdecoder.json (family, num_classes, labels…)
    ▼  2. quantize + compile   ModelSDK PTQ (int8, real-image calibration) or
-   │      (ModelSDK, modalix)   bf16 (calibration-free), whole graph on the MLA
+   │      (toolchain/quantize_compile.py)  bf16 (calibration-free); whole graph on the MLA
    ▼  3. emit                 <name>_surgery_mpk.tar.gz  (labels bundled)
    ▼  4. verify               identify_model.py confirms family/classes + writes
-          (identify_model.py)   a matching labels.txt
+          (models/identify_model.py)  a matching labels.txt
 ```
 
-Works for **YOLOv6, v8, v9, v10, v11, yolo26, yolox** (the family is
-auto-detected), at **any class count** — surgery preserves the class dimension,
-so a 3-class, 80-class or custom model all convert the same way.
+Works for **YOLOv6, v8, v9, v10, v11, yolo26, yolox** (family auto-detected) at
+**any class count** — surgery preserves the class dimension, so a 3-class,
+80-class or custom model all convert the same way.
 
-## Prerequisite: the SiMa conversion toolchain image
+## Prerequisite: the `sima-neat` (Model Compiler) container
 
-Surgery + compile run inside the SiMa toolchain container
-`sima-ultralytics-toolchain`, which bundles the ModelSDK compiler. Obtain or
-build it from the **SiMa Modalix SDK** (it needs the ModelSDK, which is licensed
-through SiMa — the same SDK you already use to compile models). Confirm it's
-present:
+The compile step uses the SiMa **ModelSDK** (`afe`). Run everything **inside the
+`sima-neat` / Model Compiler container**, which provides it — that's the only
+requirement. (The surgery step alone needs just `onnx`/`numpy`.) The scripts are
+vendored in [`toolchain/`](toolchain/); nothing else to download.
 
-```bash
-docker images | grep sima-ultralytics-toolchain
-```
-
-Set `TOOLCHAIN_IMAGE=<name>` if yours is tagged differently.
-
-## Run it (one command)
+## Run it (one command, inside `sima-neat`)
 
 ```bash
 # int8 (recommended for throughput) — give it your own domain calibration images:
@@ -53,7 +48,23 @@ Set `TOOLCHAIN_IMAGE=<name>` if yours is tagged differently.
 ./surger.sh /path/to/your_yolov6.onnx --bf16 --name my-v6
 ```
 
-Output (default `surger_out/` next to the model):
+The wrapper activates the Model Compiler env if `activate-model-compiler` is on
+PATH, checks that `afe` imports, then runs the vendored `convert_int8.py` /
+`convert.py`. If `afe` isn't importable it tells you to run inside `sima-neat`.
+
+You can also call the vendored scripts directly:
+
+```bash
+cd toolchain
+PYTHONPATH=. python3 convert_int8.py your_yolov6.onnx out/ --calib-dir imgs/ --num-calib 50
+# surgery only (onnx/numpy, no ModelSDK):
+PYTHONPATH=. python3 -m model_surgery your_yolov6.onnx --outdir out/
+```
+
+Prefer the prebuilt image? `./surger.sh model.onnx --calib imgs/ --docker`
+(needs the `sima-ultralytics-toolchain` image; `TOOLCHAIN_IMAGE` overrides).
+
+## Output
 
 ```
 surger_out/
@@ -64,11 +75,12 @@ surger_out/
 ```
 
 `surger.sh` finishes by running `identify_model.py` on the pack, so a successful
-run *also* prints the ready-to-paste `models:` config line. If surgery didn't
-take, `identify_model.py` fails the run and points you at `logs.json`.
+run also prints the ready-to-paste `models:` config line. If surgery didn't take,
+`identify_model.py` fails the run and points you at `logs.json`.
 
 Options: `--int8`/`--bf16`, `--calib DIR`, `--num-calib N` (default 50),
-`--imgsz N` (default 640), `--out DIR`, `--name NAME`. `./surger.sh --help`.
+`--imgsz N` (default 640), `--out DIR`, `--name NAME`, `--docker`.
+`./surger.sh --help`.
 
 ## Deploy in this app
 
@@ -93,3 +105,10 @@ class count — which is why `surger.sh` emits a matching one for you.
   to a non-surgered model too. Verify accuracy host-side (decode the fp32 export
   and the int8-simulated pack on the same images) — never benchmark accuracy by
   eye on a board.
+
+## Contents
+
+- [`toolchain/`](toolchain/) — vendored SiMa conversion scripts (see its `NOTICE`):
+  `model_surgery/` (surgery), `convert.py` / `convert_int8.py` (orchestrators),
+  `quantize_compile.py` (ModelSDK compile).
+- `surger.sh` — the one-command wrapper.
