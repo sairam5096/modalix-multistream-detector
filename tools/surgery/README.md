@@ -112,3 +112,13 @@ class count — which is why `surger.sh` emits a matching one for you.
   `model_surgery/` (surgery), `convert.py` / `convert_int8.py` (orchestrators),
   `quantize_compile.py` (ModelSDK compile).
 - `surger.sh` — the one-command wrapper.
+
+## Packs compiled with ModelSDK 2.1.x on the B1157 platform release
+
+The B1157 runtime enforces a strict model-pack contract and refuses some 2.1.x packs
+(single-output models whose MLA output feeds a bare `detessellate` stage; SDK 2.0.0
+quantize/dequantize packs). Multi-output detector packs produced by this surgery flow carry the
+typed `unpack_transform` chain and run unchanged. For the rest, see
+[`b1157_pack_tools/`](b1157_pack_tools/): `inspect_mpk.py` gives a per-pack verdict,
+`convert_mpk_b1157.py` rewrites a single-output pack without recompiling, and `ofm_recover.py`
+recovers and de-tessellates the raw MLA output in the application.
