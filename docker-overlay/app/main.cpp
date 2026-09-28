@@ -159,10 +159,10 @@ std::mutex g_log_mu;
 
 // Clean shutdown. SIGTERM (from `docker stop`) / SIGINT set this flag; the main loop
 // then breaks, run_stream() returns normally, and the local neat::Run / neat::Graph
-// objects destruct in order — releasing the MLA, the HW decoder and their contiguous
-// CMA. Without it, SIGTERM terminates the process abruptly: no destructors run, the
-// MLA/decoder handles and their CMA are never freed, and the memory does not come back
-// until a reboot (the "resources aren't reclaimed between runs" symptom).
+// objects destruct in order, closing the decoder, the model session and the encoder.
+// Without a handler the app, being PID 1 in its container, ignores SIGTERM: Docker
+// waits the whole stop timeout and then SIGKILLs it (exit 137). With it, a stop takes
+// well under a second and exits 0.
 std::atomic<bool> g_stop{false};
 extern "C" void on_stop_signal(int) { g_stop.store(true, std::memory_order_relaxed); }
 
@@ -360,7 +360,7 @@ int run_stream(const Args a) try {
   while (true) {
     if (g_stop.load(std::memory_order_relaxed)) {
       log("stop signal received: draining and closing run/decoder cleanly");
-      break;   // return normally -> run/sender/graph destructors release MLA + decoder + CMA
+      break;   // return normally -> run/sender/graph destructors close the pipelines in order
     }
     bool got = false;
     if (auto sd = run.pull("detections", 100)) {
@@ -474,7 +474,7 @@ int main(int argc, char** argv) {
     threads.emplace_back([s] {
       const int rc = run_stream(s);
       // Clean shutdown: run_stream() already returned normally, so this pipeline's
-      // decoder/model Run was destructed and its CMA released — just return to be joined.
+      // decoder/model Run was destructed; just return to be joined.
       if (g_stop.load(std::memory_order_relaxed)) return;
       // Unexpected end of a single pipeline: hard-exit so the restart policy relaunches all.
       std::cout << "[overlay-cpp ch" << s.channel << "] pipeline ended rc=" << rc << "; exiting process for relaunch" << std::endl;

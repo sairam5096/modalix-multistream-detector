@@ -1,88 +1,117 @@
-# Clean start-up / clean shutdown for a YOLOv6s container
+# Clean start-up and clean shutdown for a YOLOv6s container
 
-A sample that shows how to start and **stop** a YOLOv6s detector container on the
-SOM so that every stop **fully releases the MLA, the HW decoder and their
-contiguous CMA** — and repeated start/stop cycles do not leak. This is the fix for
-the *"resources aren't reclaimed between runs / `EBUSY` while `CmaFree` is high /
-only a reboot recovers it"* symptom.
+A sample that starts a YOLOv6s detector container, confirms it is healthy, stops it
+quickly and in order, and proves with a cycle test that nothing stays allocated
+between runs.
 
-## Why memory leaks across runs (and how this fixes it)
+```
+ start  ->  wait for "detector running"  ->  run  ->  docker stop (SIGTERM)
+                 |                                         |
+                 v fails                                   v
+        show why, remove container              app closes pipelines, exit 0 in < 1 s
+```
 
-The decoder and the model Run hold **contiguous CMA** (order-9/10 blocks). They are
-released in the neat objects' **destructors**. If the process is terminated
-*abruptly*, destructors never run, so those handles and their CMA are never freed —
-and because CMA can't be compacted, the next big allocation `EBUSY`s even though
-`CmaFree` looks high, until a reboot.
+## What it does and why
 
-Two things cause an abrupt termination, and this sample fixes both:
+| Rule | Without it | With it |
+|---|---|---|
+| The app handles `SIGTERM` / `SIGINT` | The app is PID 1 in its container, so it ignores `SIGTERM`. Docker waits the whole stop timeout, then kills it: 30 s, exit 137 | The main loop breaks, the pipelines close in order: about 0.4 s, exit 0 |
+| `--stop-timeout 30` on the container | A slow teardown could be cut short by `SIGKILL` | Docker waits long enough for the clean close |
+| Bounded restart policy (`on-failure:3`) | A container that cannot start loops forever under `unless-stopped`. Many looping containers can overload the SOM | It gives up after 3 tries |
+| `start` checks health and cleans up | A failed start leaves a container behind | The reason is printed and the container is removed |
 
-1. **No SIGTERM handler in the app.** `docker stop` sends `SIGTERM`; with no
-   handler the default action kills the process with no stack unwinding → no
-   destructors. **Fix:** `app/main.cpp` now installs a `SIGTERM`/`SIGINT` handler
-   that sets a stop flag; the main loop breaks, `run_stream()` returns normally,
-   and the `neat::Run` / `neat::Graph` objects destruct → MLA + decoder + CMA
-   released. (It also no longer `_exit()`s the multi-stream path on a clean stop,
-   which would skip destructors too.)
+## What we measured
 
-2. **`docker stop` not giving it time.** After `SIGTERM`, Docker waits only
-   `--stop-timeout` (default 10 s) before `SIGKILL`. If teardown needs longer it
-   gets killed → same leak. **Fix:** the container is created with
-   `--stop-timeout 30`, and `docker stop -t 30` is used.
+Modalix DevKit, one 720p 5 fps stream, YOLOv6s.
 
-Corollary: **never** tear a detector down with `kill -9` / `docker kill` / a short
-`docker stop -t 1`. That is the leak.
+| How the container ended | Stop time | Exit code | Buffers still pinned afterwards |
+|---|---|---|---|
+| `docker stop`, app with the handler | 0.4 s | 0 | none |
+| `docker stop -t 30`, app without the handler | 30 s | 137 | none |
+| `docker kill` | 2 s | 137 | none |
+
+On this build the kernel releases the decoder, MLA and CMA buffers when the process
+exits, however it exits. We could not make an abrupt stop leak memory. The handler is
+still the right thing to do: stops are fast, exit codes are meaningful, and the
+hardware is shut down in order instead of mid-frame.
+
+If you do see memory that stays allocated after every container is gone, the cause is
+elsewhere. Things to check:
+
+- A service outside the containers that holds buffers for them, for example a legacy
+  `decoder.service`. It does not exist on a current installation.
+- Containers that are still being restarted by Docker: `docker ps -a`.
+- The kernel message for the failed allocation: `dmesg | grep -A12 __cma_alloc`. Its
+  `range 0:` line lists the free holes, and the last line gives free and total pages.
 
 ## Prerequisites
 
-- Build the app: `../app/build.sh` in the Neat SDK container, then copy
+- Build the app with `../app/build.sh` in the Neat SDK container, then copy
   `build/overlay-detector` to `../docker/build/overlay-detector` on the board.
-- `../docker/demo.env` filled in (`INSIGHT_HOST`, `MEDIA_HOST`, `MODELS_DIR`).
-- Your **YOLOv6s** pack in `MODELS_DIR` (default mount → `models2/`), e.g.
-  `models2/yolov6s_mpk.tar.gz`. Set a different name with `MODEL=...`.
+- Fill in `../docker/demo.env` (`INSIGHT_HOST`, `MEDIA_HOST`, `MODELS_DIR`).
+- Put your YOLOv6s pack in `MODELS_DIR`. It is mounted at `models2/`. The default name
+  is `models2/yolov6s_mpk.tar.gz`; set another with `MODEL=...`. The pack must emit
+  its box tensors before its class tensors for the in-graph YoloV6 decode.
 
 ## Run it (on the board)
 
 ```bash
-# one clean start (waits until the detector reports "detector running")
+# start and wait until the detector reports "detector running"
 ./lifecycle.sh start 1 rtsp://<MEDIA_HOST>:8554/mystream_5fps01 0
 
-# clean stop — prints CmaFree before/after and confirms a graceful teardown
+# graceful stop: prints stop time, exit code and memory
 ./lifecycle.sh stop 1
 
-# the real proof: K start/stop cycles, CmaFree printed after each
-./lifecycle.sh cycle 10
+# 10 start/stop cycles with a PASS or FAIL verdict
+sudo -E ./lifecycle.sh cycle 10
 ```
 
-`MODEL`, `FPS`, `STOP_TIMEOUT`, `READY_TIMEOUT` are env-overridable.
+Run `cycle` as root to get pinned-buffer accounting from
+`/sys/kernel/debug/dma_buf/bufinfo`. That is the reliable leak metric. Without root
+only `CmaFree` is shown, and page cache moves that figure by a few MB.
+
+Settings, all overridable from the environment:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MODEL` | `models2/yolov6s_mpk.tar.gz` | model pack |
+| `FPS` | 5 | source frame rate |
+| `STOP_TIMEOUT` | 30 | seconds Docker waits after `SIGTERM` |
+| `READY_TIMEOUT` | 60 | seconds to wait for a healthy start |
+| `RUN_S` | 45 | seconds each cycle runs |
+| `RESTART` | `on-failure:3` | Docker restart policy |
+| `PINNED_TOL_MB` | 8 | allowed difference from the pinned baseline |
 
 ## What good output looks like
 
 ```
->> [start] CmaFree baseline = 1802 MB — launching neat-ovc-1 (YOLOv6s, 5 fps)
->> [start] neat-ovc-1 healthy (detector running); CmaFree now 1520 MB
->> [stop]  CmaFree before = 1520 MB — docker stop -t 30 neat-ovc-1 (SIGTERM)
->> [stop]  graceful teardown confirmed (app closed the Run/decoder)
->> [stop]  CmaFree after = 1800 MB  (recovered 280 MB)
+>> [start] CmaFree 1713 MB, pinned 1 MB - launching neat-ovc-1 (YOLOv6s, 5 fps)
+>> [start] neat-ovc-1 healthy (detector running); CmaFree 1684 MB, pinned 30 MB
+>> [stop] CmaFree 1652 MB, pinned 119 MB - docker stop -t 30 neat-ovc-1 (SIGTERM)
+>> [stop] graceful close confirmed: exit 0 after 387 ms
+>> [stop] CmaFree 1703 MB, pinned 1 MB
 ```
 
-And across cycles, `CmaFree` returns to ~baseline every time:
+```
+>> [cycle] 3x start/stop, 20s each. Baseline: CmaFree 1707 MB, pinned 1 MB
+   cycle  1/3: CmaFree = 1705 MB, pinned = 1 MB
+   cycle  2/3: CmaFree = 1712 MB, pinned = 1 MB
+   cycle  3/3: CmaFree = 1710 MB, pinned = 1 MB
+>> [cycle] PASS: pinned buffers returned to baseline after every stop (no leak).
+```
+
+A failed start looks like this, and leaves nothing behind:
 
 ```
-   cycle  1/10: CmaFree = 1800 MB
-   cycle  5/10: CmaFree = 1801 MB
-   cycle 10/10: CmaFree = 1800 MB
+>> [start] neat-ovc-1 FAILED: state 'running 1' (exited or being restarted) - usually a wrong MODEL path or RTSP URL
+[ERR] [io.parse] ModelPack: ... archive path does not exist or is not a regular file: models2/yolov6s_mpk.tar.gz
+>> [start] neat-ovc-1 removed
 ```
-
-**Flat across cycles = clean reclamation.** A steady downward trend, or a missing
-"graceful teardown confirmed" line, means the process was killed before it could
-close — check that nothing is `kill -9`ing it and that `--stop-timeout` is long
-enough.
 
 ## Adapting to your app
 
-The same two rules apply to any detector, not just this overlay example:
-- Install a `SIGTERM`/`SIGINT` handler → break your loop → let the `neat::Run` /
-  decoder objects destruct (or call their `close()` explicitly) before exit. Never
-  `_exit()`/`abort()` on the clean-shutdown path.
-- Create the container with a `--stop-timeout` longer than your worst-case
-  teardown, and stop it with `docker stop` (SIGTERM), never `docker kill`.
+- Install a `SIGTERM` / `SIGINT` handler, break your loop, and let the `neat::Run` and
+  decoder objects destruct before exit. Do not call `_exit()` or `abort()` on the
+  clean-shutdown path.
+- Create the container with a `--stop-timeout` longer than your worst-case teardown.
+- Use a bounded restart policy while you are still finding out how many streams fit.
