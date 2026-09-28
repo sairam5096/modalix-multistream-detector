@@ -48,7 +48,9 @@ elsewhere. Things to check:
 
 - Build the app with `../app/build.sh` in the Neat SDK container, then copy
   `build/overlay-detector` to `../docker/build/overlay-detector` on the board.
-- Fill in `../docker/demo.env` (`INSIGHT_HOST`, `MEDIA_HOST`, `MODELS_DIR`).
+- On the board, in `../docker`: copy `demo.env.example` to `demo.env` and fill in
+  `INSIGHT_HOST`, `MEDIA_HOST` and `MODELS_DIR`, then build the empty image once with
+  `docker build -t neat-overlay:mounted .`
 - Put your YOLOv6s pack in `MODELS_DIR`. It is mounted at `models2/`. The default name
   is `models2/yolov6s_mpk.tar.gz`; set another with `MODEL=...`. The pack must emit
   its box tensors before its class tensors for the in-graph YoloV6 decode.

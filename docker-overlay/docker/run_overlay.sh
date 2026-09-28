@@ -13,6 +13,11 @@ APP_ARGS=(); DOCKER_ARGS=(); mode=app
 for x in "$@"; do if [[ $x == "--" ]]; then mode=docker; continue; fi; if [[ $mode == app ]]; then APP_ARGS+=("$x"); else DOCKER_ARGS+=("$x"); fi; done
 set --
 [[ -x build/overlay-detector ]] || { echo "missing build/overlay-detector" >&2; exit 1; }
+MODELS_DIR=${MODELS_DIR:-/data/models}
+mkdir -p models    # bundled default model goes here; the folder may be empty when --model points into models2/
+[[ -d $MODELS_DIR ]] || { echo "MODELS_DIR '$MODELS_DIR' does not exist (set it in demo.env)" >&2; exit 1; }
+[[ -f labels.txt ]] || { echo "missing labels.txt next to run_overlay.sh" >&2; exit 1; }
+docker image inspect "${IMAGE:-neat-overlay:mounted}" >/dev/null 2>&1 || { echo "image ${IMAGE:-neat-overlay:mounted} not found: run 'docker build -t ${IMAGE:-neat-overlay:mounted} .' here first" >&2; exit 1; }
 for path in /usr/lib /lib /etc/ld.so.cache /etc/alternatives \
   /usr/share/sima-neat /usr/share/glib-2.0 /bin/sh /usr/bin/tar /usr/bin/gzip; do
   set -- "$@" --mount "type=bind,src=$path,dst=$path,readonly"
@@ -27,7 +32,7 @@ exec docker run -d --restart unless-stopped --name "neat-ovc-$N" --network host 
   "$@" "${DOCKER_ARGS[@]}" \
   --mount "type=bind,src=$app_dir/build/overlay-detector,dst=/opt/neat-app/overlay-detector,readonly" \
   --mount "type=bind,src=$app_dir/models,dst=/opt/neat-app/models,readonly" \
-  --mount "type=bind,src=${MODELS_DIR:-/data/models},dst=/opt/neat-app/models2,readonly" \
+  --mount "type=bind,src=$MODELS_DIR,dst=/opt/neat-app/models2,readonly" \
   --mount "type=bind,src=$app_dir/labels.txt,dst=/opt/neat-app/labels.txt,readonly" \
   --entrypoint /opt/neat-app/overlay-detector \
   ${IMAGE:-neat-overlay:mounted} --url "$URL" --channel "$CH" --host "$INSIGHT_HOST" "${APP_ARGS[@]}"
