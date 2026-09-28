@@ -19,6 +19,8 @@
 #include <thread>
 #include <cstdint>
 #include <cstdlib>
+#include <csignal>
+#include <atomic>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -154,6 +156,15 @@ void draw(cv::Mat& bgr, const std::vector<objdet::Box>& boxes, const std::vector
 
 std::mutex g_build_mu;  // graph builds are serialized across the pipelines of one process
 std::mutex g_log_mu;
+
+// Clean shutdown. SIGTERM (from `docker stop`) / SIGINT set this flag; the main loop
+// then breaks, run_stream() returns normally, and the local neat::Run / neat::Graph
+// objects destruct in order — releasing the MLA, the HW decoder and their contiguous
+// CMA. Without it, SIGTERM terminates the process abruptly: no destructors run, the
+// MLA/decoder handles and their CMA are never freed, and the memory does not come back
+// until a reboot (the "resources aren't reclaimed between runs" symptom).
+std::atomic<bool> g_stop{false};
+extern "C" void on_stop_signal(int) { g_stop.store(true, std::memory_order_relaxed); }
 
 int run_stream(const Args a) try {
   const int W = a.width, H = a.height, FPS = a.fps;
@@ -347,6 +358,10 @@ int run_stream(const Args a) try {
   };
 
   while (true) {
+    if (g_stop.load(std::memory_order_relaxed)) {
+      log("stop signal received: draining and closing run/decoder cleanly");
+      break;   // return normally -> run/sender/graph destructors release MLA + decoder + CMA
+    }
     bool got = false;
     if (auto sd = run.pull("detections", 100)) {
       got = true;
@@ -436,12 +451,16 @@ int run_stream(const Args a) try {
       win = 0;
     }
   }
+  log("clean shutdown: releasing run, decoder and CMA");
+  return 0;   // loop broke on stop signal -> run/sender/graph destruct here (clean close)
 } catch (const std::exception& e) {
   std::cerr << "[ERR] " << e.what() << std::endl;
   return 1;
 }
 
 int main(int argc, char** argv) {
+  std::signal(SIGTERM, on_stop_signal);   // `docker stop` -> graceful teardown (see g_stop)
+  std::signal(SIGINT, on_stop_signal);    // Ctrl-C likewise
   Args a;
   try { a = parse(argc, argv); } catch (const std::exception& e) { std::cerr << "[ERR] " << e.what() << std::endl; return 1; }
   if (a.urls.size() <= 1) return run_stream(a);
@@ -454,11 +473,15 @@ int main(int argc, char** argv) {
     s.channel = a.channel + static_cast<int>(i);
     threads.emplace_back([s] {
       const int rc = run_stream(s);
+      // Clean shutdown: run_stream() already returned normally, so this pipeline's
+      // decoder/model Run was destructed and its CMA released — just return to be joined.
+      if (g_stop.load(std::memory_order_relaxed)) return;
+      // Unexpected end of a single pipeline: hard-exit so the restart policy relaunches all.
       std::cout << "[overlay-cpp ch" << s.channel << "] pipeline ended rc=" << rc << "; exiting process for relaunch" << std::endl;
       ::_exit(rc ? rc : 2);
     });
     std::this_thread::sleep_for(std::chrono::seconds(3));
   }
   for (auto& t : threads) t.join();
-  return 2;
+  return g_stop.load(std::memory_order_relaxed) ? 0 : 2;   // clean stop -> 0
 }
