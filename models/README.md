@@ -20,6 +20,8 @@ class names, one per line) is also expected next to the detector.
 > **YOLOv6** pack is the exception: it uses `decode_type: yolov6` (a 4-channel
 > reg + N-class head at 640×640). Set `decode_type` per model in the config;
 > the wrong decoder yields empty or malformed boxes.
+> Packs surgered before 2026-10-06 report scores only between 0.5 and 0.731 (double
+> sigmoid); re-run `tools/surgery/surger.sh` on them. See `docs/MODEL_SURGERY.md`.
 
 ## Identifying a pack (`identify_model.py`)
 

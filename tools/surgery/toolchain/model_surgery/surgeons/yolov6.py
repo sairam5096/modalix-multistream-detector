@@ -152,13 +152,17 @@ class SurgeonYoloV6(SurgeonBase):
             )
             oh.insert_after(model, dec, add)
 
-            # ---- class path: Sigmoid straight off cls_preds.{i}/Conv ----
+            # ---- class path: raw logits off cls_preds.{i}/Conv (the Neat yolov6 decoder
+            # applies the sigmoid itself; see contract.RUNTIME_SIGMOIDS_CLASS) ----
             cls_conv = _find_conv_by_weight(model, f"{hp}.cls_preds.{i}.weight")
-            sig = oh.make_node(
-                name=f"{hp}/cls/{i}/Sigmoid", op_type="Sigmoid",
-                inputs=cls_conv.output, outputs=[f"class_prob_{i}"],
-            )
-            oh.insert_after(model, cls_conv, sig)
+            if contract.class_is_prob(ident):
+                sig = oh.make_node(
+                    name=f"{hp}/cls/{i}/Sigmoid", op_type="Sigmoid",
+                    inputs=cls_conv.output, outputs=[f"class_prob_{i}"],
+                )
+                oh.insert_after(model, cls_conv, sig)
+            else:
+                oh.rename_tensor(model, cls_conv.output[0], f"class_prob_{i}")
 
         # The original dist2bbox tail no longer feeds any graph output — it is
         # unreachable and save_model's keep_reachable_from_outputs() prunes it.

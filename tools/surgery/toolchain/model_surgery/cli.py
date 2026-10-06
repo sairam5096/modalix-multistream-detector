@@ -71,6 +71,9 @@ def run(args: argparse.Namespace) -> int:
     model, ident = identify(src, simplify=not args.no_simplify)
     if args.variant:
         ident.family = args.variant.lower().strip()   # force family (e.g. yolov7, yolox)
+    if args.class_output != "auto":
+        ident.class_output = args.class_output
+    contract.warn_if_double_sigmoid(ident)
     print(f"\n[identify] {ident.describe()}  -> surgeon '{ident.surgeon_key}'\n")
 
     # 2) pre-surgery audit
@@ -137,6 +140,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name", help="output model stem (default: <input>_surgery)")
     p.add_argument("--labels", help="labels file (.txt one-per-line or .json); default COCO80/synth")
     p.add_argument("--variant", help="force variant, e.g. yolov8 (overrides auto-ID)")
+    p.add_argument("--class-output", choices=["auto", "logits", "prob"], default="auto",
+                   help="class tensors: auto = what the Neat decoder for this decode_type expects "
+                        "(logits for yolov6/yolox/yolo26, since it applies sigmoid itself); "
+                        "force logits or prob to override")
     p.add_argument("--topk", type=int, default=contract.DEFAULT_TOPK, help="max detections (box-decoder)")
     p.add_argument("--dtype", choices=["int8", "bfloat16", "any"], default="bfloat16",
                    help="op-support policy for the audit (Modalix -> bfloat16)")

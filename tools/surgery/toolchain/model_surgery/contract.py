@@ -182,10 +182,34 @@ def input_depth(ident: "YoloIdentity") -> list[int]:
     return [d, d, d]
 
 
+# The Neat box decoder (libsimaai_genboxdecode[_v2].so, Neat 0.4.0) applies its own
+# sigmoid to the class tensors of these decode types and has no way to be told
+# otherwise (`class_is_prob` never reaches the runtime config). Emitting a Sigmoid
+# from the graph for them yields sigmoid(sigmoid(x)): scores floor at 0.5 and cap at
+# 0.731, so any min_score <= 0.5 filters nothing. Reported by Wobot, 2026-10-01;
+# measured on Modalix (yolov6s int8: on-device scores 0.54..0.72, none outside).
+RUNTIME_SIGMOIDS_CLASS = {"yolov6", "yolox", "yolo26"}
+
+
 def class_is_prob(ident: "YoloIdentity") -> bool:
-    # v5/v7 raw heads are logits; anchor-free surgery bakes Sigmoid; yolox exports
-    # are typically already sigmoided.
+    """True when the surgered graph should emit post-Sigmoid class probabilities."""
+    override = getattr(ident, "class_output", None)
+    if override == "logits":
+        return False
+    if override == "prob":
+        return True
+    if ident.decode_type in RUNTIME_SIGMOIDS_CLASS:
+        return False          # the on-device decoder sigmoids these itself
+    # v5/v7 raw heads are logits; other anchor-free surgery bakes Sigmoid; yolox
+    # exports are typically already sigmoided.
     return ident.anchor_free
+
+
+def warn_if_double_sigmoid(ident: "YoloIdentity") -> None:
+    if ident.decode_type in RUNTIME_SIGMOIDS_CLASS and class_is_prob(ident):
+        log.warning("decode_type '%s': the Neat decoder applies sigmoid itself; emitting "
+                    "probabilities will double-sigmoid the scores (floor 0.5, cap 0.731). "
+                    "Use --class-output logits.", ident.decode_type)
 
 
 # --------------------------------------------------------------------------- #

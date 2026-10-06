@@ -122,3 +122,12 @@ typed `unpack_transform` chain and run unchanged. For the rest, see
 [`b1157_pack_tools/`](b1157_pack_tools/): `inspect_mpk.py` gives a per-pack verdict,
 `convert_mpk_b1157.py` rewrites a single-output pack without recompiling, and `ofm_recover.py`
 recovers and de-tessellates the raw MLA output in the application.
+
+## Re-build packs made before 2026-10-06
+
+Packs produced before that date double-sigmoid their class scores on the device
+(scores confined to 0.5–0.731, so `min_score` ≤ 0.5 filters nothing). The fix is in
+the surgery, so re-run `surger.sh` on the original ONNX; nothing changes on the board.
+Details in [`../../docs/MODEL_SURGERY.md`](../../docs/MODEL_SURGERY.md#score-semantics-the-class-tensors-are-logits-fixed-2026-10-06).
+`identify_model.py` shows `class_is_prob`: `false` is the corrected shape for
+`yolov6` / `yolox` / `yolo26` packs.
