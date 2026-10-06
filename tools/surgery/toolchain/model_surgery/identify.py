@@ -97,6 +97,7 @@ class YoloIdentity:
     num_anchors: int = 1         # v5/v7 = 3
     num_kpts: int = 0            # pose only
     anchors: list | None = None  # v5/v7 [3,3,2] priors read from the graph (None = use defaults)
+    class_output: str | None = None   # None=auto | 'logits' | 'prob' (--class-output)
     flavor: str | None = None
     notes: list[str] = field(default_factory=list)
 

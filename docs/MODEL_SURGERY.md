@@ -26,9 +26,10 @@ surgered export         bbox_0       [1,  4, 80, 80]      \
 ```
 
 `N` is the class count — surgery preserves it, so a 3-class, 80-class or any
-custom YOLOv6 surgers the same way. The `class_prob_*` heads carry probabilities
-(`class_is_prob: true`), and `bbox_*` are the raw reg heads the decoder turns
-into `cxcywh_pixel` → `xyxysc` boxes.
+custom YOLOv6 surgers the same way. The `class_prob_*` heads carry the raw class
+logits (`class_is_prob: false`; the on-device decoder applies the sigmoid — see the
+score-semantics section below), and `bbox_*` are the raw reg heads the decoder
+turns into `cxcywh_pixel` → `xyxysc` boxes.
 
 ## Why it matters (measured)
 
@@ -104,3 +105,23 @@ the MLA ceiling, adding a second pipeline does not help** — both pipelines
 contend for the same MLA and total throughput is flat-to-slightly-worse.
 Multiple pipelines only add throughput while a single pipeline is *below* the
 MLA ceiling. Surger first; split only if you must.
+
+## Score semantics: the class tensors are logits (fixed 2026-10-06)
+
+Earlier versions of the surgery emitted a `Sigmoid` on the class head and recorded
+`class_is_prob: true`. The on-device Neat box decoder for `decode_type` **`yolov6`**,
+**`yolox`** and **`yolo26`** applies its own sigmoid and cannot be told not to
+(`class_is_prob` never reaches the runtime), so scores came out as
+`sigmoid(sigmoid(x))`: never below 0.5, never above 0.731. A `min_score` of 0.45
+filtered nothing, and 0.8 returned nothing. Boxes and ranking were unaffected, which
+is why it passed visual checks. Found and analysed by Wobot; reproduced here on a
+Modalix card (yolov6s int8: on-device scores 0.54–0.72 with `min_score: 0.01`).
+
+Now the surgeons for those decode types emit the raw conv output (logits) and write
+`class_is_prob: false`; the decoder's single sigmoid gives real probabilities, so
+`min_score` means what it says. `--class-output logits|prob` forces either shape, and
+surgery warns if a pack would double-sigmoid.
+
+**Packs built before this change must be re-run through `surger.sh`** — the fix is in
+the graph, not the runtime. Re-check your `min_score` values afterwards: on an old pack
+every value at or below 0.5 behaved like 0.

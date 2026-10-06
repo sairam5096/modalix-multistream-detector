@@ -226,6 +226,21 @@ def clear_outputs(model: onnx.ModelProto) -> None:
     del model.graph.output[:]
 
 
+def rename_tensor(model: onnx.ModelProto, old: str, new: str) -> int:
+    """Rename a tensor everywhere it appears (node outputs/inputs, graph outputs,
+    value_info). Returns the number of references updated."""
+    n = 0
+    for node in model.graph.node:
+        for i, t in enumerate(node.output):
+            if t == old: node.output[i] = new; n += 1
+        for i, t in enumerate(node.input):
+            if t == old: node.input[i] = new; n += 1
+    for coll in (model.graph.output, model.graph.value_info):
+        for vi in coll:
+            if vi.name == old: vi.name = new; n += 1
+    return n
+
+
 def add_output(model: onnx.ModelProto, name: str, shape) -> None:
     model.graph.output.append(
         helper.make_tensor_value_info(name, onnx.TensorProto.FLOAT, list(shape))

@@ -81,11 +81,14 @@ class SurgeonYolo26(SurgeonBase):
         # 3) class path — Sigmoid off cv3.*.2/Conv
         for i in range(len(contract.STRIDES)):
             cls_conv = oh.find_node(model, f"{head}/{o}cv3.{i}/{o}cv3.{i}.2/Conv")
-            sig = oh.make_node(
-                name=f"{head}/{o}cv3.{i}/{o}cv3.{i}.2/Sigmoid", op_type="Sigmoid",
-                inputs=cls_conv.output, outputs=[f"class_prob_{i}"],
-            )
-            oh.insert_after(model, cls_conv, sig)
+            if contract.class_is_prob(ident):
+                sig = oh.make_node(
+                    name=f"{head}/{o}cv3.{i}/{o}cv3.{i}.2/Sigmoid", op_type="Sigmoid",
+                    inputs=cls_conv.output, outputs=[f"class_prob_{i}"],
+                )
+                oh.insert_after(model, cls_conv, sig)
+            else:   # the Neat yolo26 decoder sigmoids the class tensors itself
+                oh.rename_tensor(model, cls_conv.output[0], f"class_prob_{i}")
 
         # 4) the E2E TopK/Gather tail is now unreachable from the outputs —
         #    save_model's keep_reachable_from_outputs() prunes it.
