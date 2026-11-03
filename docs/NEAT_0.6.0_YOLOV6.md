@@ -47,6 +47,15 @@ one with `0.6.0+main.b2001ee23b8c`. Same YOLOv6s model, same 720p highway frame,
 | decoded heads | yolo | any | rejected: "The MPK did not declare a concrete BoxDecode decode_type" |
 | raw heads (`tools/yolov6_raw_export`) | yolov6 | Auto | fails to build: "logical channel count exceeds source storage" |
 | raw heads | yolov6 | **GroupedByRoleLogit** | **13 tight boxes on the vehicles, scores up to 0.82** |
+| raw heads | yolov6 | GroupedByRoleLogit, no `num_classes` | fails to build: "class count must be 1..336" |
+
+Independent re-run (2026-11-03, fresh export + fresh bf16 compile + fresh board run on the 0.6.0 release
+board): same outcome. Export tool accepts both the official export and the surgered ONNX (identical raw
+outputs). Against an onnxruntime run of the original YOLOv6s ONNX with the same preprocessing, 10 of the 13
+board boxes match the host decode at IoU > 0.5, 9 of them within 5 px; the rest are low-score edge cars the
+host scores just under 0.30 and one NMS near-duplicate. Scores run up to +0.2 higher on the board (bf16 pack,
+different resize kernel). 3-class DFL pack: DFL projection matches the ONNX math to 3e-6; on-device boxes
+within 1 px of the host reference decode.
 
 Raw tensor ranges confirm the diagnosis: the decoded pack's bbox heads span 2..648 on a 640
 input (pixels); the raw pack's span -0.1..10 (grid-unit distances).
@@ -88,6 +97,11 @@ the original ONNX to within 1 px (e.g. person 0.94 at (594,24)-(640,252) vs (594
 - ModelSDK 3.0.0's `afe.apis.defines` no longer exports `gen1_target`; older compile scripts
   must import it optionally.
 - Do not run `tools/surgery` after the raw export; that step folds the decode back in.
+- In the `ghcr.io/sima-neat/sdk:latest` container the compiler shells out to a bare `mla-masm`, which is not on
+  PATH even in a login shell; run the compile with `export PATH=/sdk-extensions/model-compiler/bin:$PATH` or
+  it fails late in code generation with `FileNotFoundError: 'mla-masm'`. The `sdk:v3.0.0.0` image cannot
+  `import afe` at all (missing `libLLVM.so.18.1`).
+- `num_classes` is mandatory with the raw pack (see table); the raw pack has no class count metadata the decoder trusts.
 - The C++ app in `som/` accepts `decode_type_option` and per-model `num_classes` on this branch
   (it needs the Neat 0.6.0 headers to build; older sysroots lack `decode_type_option`). The SDK 3.0.0
   container sysroot ships `libyaml-cpp.so.0.8` but not its headers: copy `/usr/include/yaml-cpp` from a
