@@ -1,0 +1,64 @@
+# YOLOv6 on Neat 0.6.0+ — 42 streams @ 3 fps with a RAW-HEAD YOLOv6 pack.
+#
+# Neat 0.6.0 decodes `decode_type: yolov6` as raw l/t/r/b + class logits. Packs made with
+# tools/surgery (decoded cx,cy,w,h in the graph) give frame-sized boxes on 0.6.0; build the
+# pack with tools/yolov6_raw_export instead and set BOTH extra fields below
+# (see docs/NEAT_0.6.0_YOLOV6.md, sima-neat/core#1272). The app needs 2-4 models, so a
+# YOLO26 pack rides along as the second entry; cameras default to the YOLOv6 one.
+#
+# Measured on a Modalix DevKit (Neat 0.6.0, SDK 3.0.0): 42 x 720p @ 3 fps, all 42 cameras at
+# the source cadence, ~1.2 A65 cores, CMA flat. Replace MEDIA_HOST with your RTSP server.
+models:
+  - {name: coco-v6, description: "YOLOv6s bf16, raw heads (tools/yolov6_raw_export)", path: ../models/yolov6s_raw_mpk.tar.gz, decode_type: yolov6, decode_type_option: GroupedByRoleLogit, num_classes: 80, labels: coco_label.txt, min_score: 0.30}
+  - {name: coco-26, description: "YOLO26n int8", path: ../models/yolo26n-det-int8-b1.tar.gz, decode_type: yolo26, labels: coco_label.txt, min_score: 0.45}
+default_models: [coco-v6]
+streams:
+  - {url: rtsp://MEDIA_HOST:8554/cam01, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam02, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam03, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam04, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam05, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam06, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam07, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam08, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam09, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam10, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam11, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam12, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam13, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam14, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam15, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam16, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam17, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam18, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam19, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam20, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam21, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam22, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam23, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam24, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam25, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam26, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam27, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam28, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam29, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam30, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam31, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam32, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam33, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam34, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam35, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam36, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam37, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam38, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam39, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam40, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam41, models: [coco-v6]}
+  - {url: rtsp://MEDIA_HOST:8554/cam42, models: [coco-v6]}
+# 720p, 5 fps sources. target_fps 0 = no decimation. Lean decoder = low CMA per stream.
+input: {width: 1280, height: 720, fps: 5, target_fps: 0, latency_ms: 100, decoder_buffers: 4, decoder_input_buffers: 1, decoder_tuning: low-memory}
+# max_inflight_per_stream is the key memory knob: keep it 1-2 for high stream counts.
+inference: {min_score: 0.45, nms_iou: 0.60, max_detections: 50, queue_depth: 2, internal_queue_depth: 1, max_inflight_per_stream: 2, max_inflight_total: 16}
+runtime: {watchdog_stall_s: 45, rebuild_retries: 4, report_hz: 10}
+control: {host: 0.0.0.0, port: 8600}
+crops: {enabled: false}

@@ -12,6 +12,12 @@ cropping.
   content-aware crop app (saves cut-outs of every detection across all 48
   streams), and a control panel to pick the model and crops per camera.
 
+> **Neat 0.6.0 / SDK 3.0.0 users:** YOLOv6 packs built with `tools/surgery` decode to
+> frame-sized boxes on 0.6.0 (decoder contract changed to raw heads). Build them with
+> [`tools/yolov6_raw_export`](tools/yolov6_raw_export/README.md) and add
+> `decode_type_option: GroupedByRoleLogit` + `num_classes`. Details and measurements:
+> [docs/NEAT_0.6.0_YOLOV6.md](docs/NEAT_0.6.0_YOLOV6.md).
+
 > Derived from the Apache-2.0 [`sima-neat/apps`](https://github.com/sima-neat/apps)
 > `high-density-multi-stream-object-detector` example. See `NOTICE`.
 

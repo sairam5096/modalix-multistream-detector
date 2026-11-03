@@ -1,5 +1,10 @@
 # YOLOv6 model surgery — the biggest throughput lever
 
+> **Neat 0.6.0 and later:** this surgery output (decoded `cx,cy,w,h` boxes in the graph) is
+> mis-decoded by the 0.6.0 `yolov6` decoder (every box becomes frame-sized). For 0.6.0+ use
+> [`tools/yolov6_raw_export`](../tools/yolov6_raw_export/README.md) instead and set
+> `decode_type_option: GroupedByRoleLogit` + `num_classes`. See [NEAT_0.6.0_YOLOV6.md](NEAT_0.6.0_YOLOV6.md).
+
 A stock YOLOv6 ONNX export ends in a **fused decode tail**: a single output
 tensor `[1, 8400, 85]` produced by concatenating the three detection heads and
 running the box-decode arithmetic (DFL / grid + stride, objectness × class)
@@ -114,7 +119,7 @@ Earlier versions of the surgery emitted a `Sigmoid` on the class head and record
 (`class_is_prob` never reaches the runtime), so scores came out as
 `sigmoid(sigmoid(x))`: never below 0.5, never above 0.731. A `min_score` of 0.45
 filtered nothing, and 0.8 returned nothing. Boxes and ranking were unaffected, which
-is why it passed visual checks. Found and analysed by Wobot; reproduced here on a
+is why it passed visual checks. Found and analysed by a customer; reproduced here on a
 Modalix card (yolov6s int8: on-device scores 0.54–0.72 with `min_score: 0.01`).
 
 Now the surgeons for those decode types emit the raw conv output (logits) and write

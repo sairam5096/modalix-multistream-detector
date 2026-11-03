@@ -1,5 +1,11 @@
 # Automated surgery → compiled pack
 
+> **Neat 0.6.0 and later:** this surgery output (decoded `cx,cy,w,h` boxes in the graph) is
+> mis-decoded by the 0.6.0 `yolov6` decoder (every box becomes frame-sized). For 0.6.0+ use
+> [`tools/yolov6_raw_export`](../yolov6_raw_export/README.md) instead and set
+> `decode_type_option: GroupedByRoleLogit` + `num_classes`. See [NEAT_0.6.0_YOLOV6.md](../../docs/NEAT_0.6.0_YOLOV6.md).
+
+
 **You provide only the model. This produces the deployable SiMa Modalix pack.**
 
 `identify_model.py` (in [`../../models/`](../../models/)) *reads* a pack; it does

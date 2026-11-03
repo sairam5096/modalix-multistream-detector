@@ -63,6 +63,8 @@ struct ModelEntry {
   std::string name;
   std::string path;
   std::string decode_type = "yolo26";
+  std::string decode_type_option = "auto";  // Neat >= 0.6.0 head-layout hint, e.g. GroupedByRoleLogit
+  int num_classes = 0;                      // 0 = app-wide/pack-derived class count
   std::string labels_path;
   double min_score = 0.45;
   double nms_iou = 0.60;
@@ -144,6 +146,9 @@ AppConfig load_config(const fs::path& path) {
     e.name = m["name"].as<std::string>();
     e.path = resolve(path, m["path"].as<std::string>()).string();
     e.decode_type = lower(m["decode_type"] ? m["decode_type"].as<std::string>() : "yolo26");
+    e.decode_type_option =
+        lower(m["decode_type_option"] ? m["decode_type_option"].as<std::string>() : "auto");
+    e.num_classes = m["num_classes"] ? m["num_classes"].as<int>() : 0;
     e.labels_path =
         m["labels"] ? resolve(path, m["labels"].as<std::string>()).string() : default_labels;
     e.min_score = m["min_score"] ? m["min_score"].as<double>() : 0.45;
@@ -244,6 +249,27 @@ neat::BoxDecodeType parse_box_decode_type(const std::string& t) {
   throw std::runtime_error("unsupported decode_type: " + t);
 }
 
+// Head-layout option (Neat >= 0.6.0). Raw-head YOLOv6 packs from tools/yolov6_raw_export
+// (3 bbox heads, then 3 class-logit heads) need GroupedByRoleLogit; Auto pairs the heads
+// per level and the pack fails to build. Accepts CamelCase, snake_case or kebab-case.
+neat::BoxDecodeTypeOption parse_box_decode_type_option(const std::string& t) {
+  std::string l;
+  for (char c : lower(t))
+    if (c != '_' && c != '-') l.push_back(c);
+  if (l.empty() || l == "auto") return neat::BoxDecodeTypeOption::Auto;
+  if (l == "packedperhead") return neat::BoxDecodeTypeOption::PackedPerHead;
+  if (l == "interleavedbyhead") return neat::BoxDecodeTypeOption::InterleavedByHead;
+  if (l == "groupedbyrole") return neat::BoxDecodeTypeOption::GroupedByRole;
+  if (l == "split3interleaved") return neat::BoxDecodeTypeOption::Split3Interleaved;
+  if (l == "split3grouped") return neat::BoxDecodeTypeOption::Split3Grouped;
+  if (l == "interleavedbyheadprobability")
+    return neat::BoxDecodeTypeOption::InterleavedByHeadProbability;
+  if (l == "interleavedbyheadlogit") return neat::BoxDecodeTypeOption::InterleavedByHeadLogit;
+  if (l == "groupedbyroleprobability") return neat::BoxDecodeTypeOption::GroupedByRoleProbability;
+  if (l == "groupedbyrolelogit") return neat::BoxDecodeTypeOption::GroupedByRoleLogit;
+  throw std::runtime_error("unsupported decode_type_option: " + t);
+}
+
 std::unique_ptr<neat::Model> make_model(const ModelEntry& e, int num_classes) {
   neat::Model::Options o;
   o.preprocess.kind = neat::InputKind::Image;
@@ -251,10 +277,14 @@ std::unique_ptr<neat::Model> make_model(const ModelEntry& e, int num_classes) {
   o.preprocess.color_convert.input_format = neat::PreprocessColorFormat::NV12;
   o.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
   o.decode_type = parse_box_decode_type(e.decode_type);
+  o.decode_type_option = parse_box_decode_type_option(e.decode_type_option);
   o.score_threshold = static_cast<float>(e.min_score);
   o.nms_iou_threshold = static_cast<float>(e.nms_iou);
   o.top_k = e.max_detections;
-  if (num_classes > 0) o.num_classes = num_classes;
+  if (e.num_classes > 0)
+    o.num_classes = e.num_classes;  // per-model override (raw packs carry no class count)
+  else if (num_classes > 0)
+    o.num_classes = num_classes;
   o.name_suffix = "_" + e.name;  // K models in one graph: keep element names unique
   return std::make_unique<neat::Model>(e.path, o);
 }
