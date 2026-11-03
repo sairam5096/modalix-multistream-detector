@@ -23,9 +23,11 @@ It keeps the backbone/neck/heads and replaces the tail:
 | `cls_0..2` | `/detect/cls_preds.N/Conv` | `[1,nc,H,W]` | class logits (no sigmoid) |
 
 For DFL variants (`reg_max > 0`, 68-channel reg heads) it keeps the projection in the
-graph as Transpose → Softmax (channel axis, MLA-supported) → 1×1 Conv with weights
-`0..reg_max`, so the output is still 4-channel. Verified against the reference DFL math
-to 1e-6 on a 3-class `reg_max=16` export.
+graph so the output is still 4-channel: `[1,4,HW,bins]` → Softmax(axis=3) → MatMul with
+weights `0..reg_max` (default), or `--dfl exp` for a softmax-free Exp → grouped 1×1 Convs → Div.
+Both compile fully on the MLA; a Transpose→Softmax(axis=1) form does not (ModelSDK accepts
+Softmax only on its channel axis). Verified on a 3-class `reg_max=16` export: 1e-6 vs the
+reference math in onnxruntime, and ±1 px vs a host reference decode when run on the DevKit.
 
 Then compile as usual (ModelSDK 3.0.0, int8 or bf16) and run with **all three** options:
 

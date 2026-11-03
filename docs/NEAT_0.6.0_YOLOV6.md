@@ -71,8 +71,17 @@ sources at 3 fps, metadata to a UDP collector:
 YOLOv6 heads trained with DFL have `4 × (reg_max+1)` regression channels (68 for
 `reg_max=16`). The 0.6.0 decoder wants 4 channels, so the projection
 (softmax over bins, expectation) must stay in the graph. `yolov6_raw_export.py` adds it
-automatically and matches the reference math to 1e-6. Which formulation the MLA accepts is
-documented in the tool README once the placement checks are complete.
+automatically and matches the reference math to 1e-6. Not every formulation compiles: the
+ModelSDK only accepts Softmax on what it sees as the channel axis, and a
+Transpose→Softmax(axis=1)→Conv form is rejected ("Softmax is supported only along channel axis")
+and then fails in the MLA simulator. The tool therefore emits
+`[1,4,HW,bins]` → Softmax(axis=3) → MatMul(`0..reg_max`) (default), or with `--dfl exp` a
+softmax-free Exp → two grouped 1×1 Convs → Div. Both compile with every op on the MLA
+(ModelSDK 3.0.0 bf16: MLA 1 / EV74 15 / A65 0).
+
+Verified on a 3-class `reg_max=16` YOLOv6 on the DevKit (0.6.0 release): with
+`yolov6` + `GroupedByRoleLogit` + `num_classes: 3`, boxes match a host-side reference decode of
+the original ONNX to within 1 px (e.g. person 0.94 at (594,24)-(640,252) vs (594,25)-(640,253)).
 
 ## Notes
 

@@ -5,13 +5,17 @@ Neat 0.6.0 decodes `yolov6` as raw l/t/r/b (grid units) + class logits. This scr
 in-graph dist2bbox / sigmoid tail of a YOLOv6 export (official export or SiMa-surgered) and emits
 six outputs grouped by role: bbox_0..2 ([1,4,H,W], raw ltrb) then cls_0..2 ([1,nc,H,W], logits).
 
-Usage: yolov6_raw_export.py in.onnx out.onnx
+Usage: yolov6_raw_export.py in.onnx out.onnx [--dfl softmax|exp]
 Then compile as usual and run with decode_type=yolov6, decode_type_option=GroupedByRoleLogit, num_classes=nc.
 """
 import re, sys, onnx
 from onnx import shape_inference
 
-src, dst = sys.argv[1], sys.argv[2]
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+DFL_MODE = "exp" if "--dfl" in sys.argv and sys.argv[sys.argv.index("--dfl") + 1] == "exp" else "softmax"
+if len(args) < 2:
+    sys.exit(__doc__)
+src, dst = args[0], args[1]
 m = onnx.load(src)
 g = m.graph
 produced = {o: n for n in g.node for o in n.output}
@@ -58,19 +62,33 @@ for i in range(3):
     for n in r.graph.node:
         for k, x in enumerate(n.output):
             if x == name: n.output[k] = name + "_dfl"
-    # MLA-friendly DFL: bins on the channel axis -> Softmax(axis=1) -> 1x1 Conv with weights 0..nb-1
-    # (this is YOLOv6's own proj_conv formulation).
+    # MLA-friendly DFL. The ModelSDK only accepts Softmax on what it sees as the channel axis and
+    # fails on a Transpose+Softmax(axis=1) form in the MLA simulator, so put the bins LAST:
+    # [1,4,nb,HW] -> Transpose -> [1,4,HW,nb] -> Softmax(axis=3) -> MatMul [nb,1] -> [1,4,HW,1] -> [1,4,H,W].
+    # (--dfl exp: softmax-free alternative, Exp + two grouped 1x1 convs + Div; also all-MLA.)
     s0 = numpy_helper.from_array(np.array([1, 4, nb, H * W], np.int64), name + "_s0")
     s1 = numpy_helper.from_array(np.array([1, 4, H, W], np.int64), name + "_s1")
-    proj = numpy_helper.from_array(np.arange(nb, dtype=np.float32).reshape(1, nb, 1, 1), name + "_proj")
-    new_inits += [s0, s1, proj]
-    new_nodes += [
-        helper.make_node("Reshape", [name + "_dfl", s0.name], [name + "_r"]),            # [1,4,nb,HW]
-        helper.make_node("Transpose", [name + "_r"], [name + "_t"], perm=[0, 2, 1, 3]),   # [1,nb,4,HW]
-        helper.make_node("Softmax", [name + "_t"], [name + "_sm"], axis=1),
-        helper.make_node("Conv", [name + "_sm", proj.name], [name + "_e"], kernel_shape=[1, 1]),  # [1,1,4,HW]
-        helper.make_node("Reshape", [name + "_e", s1.name], [name]),                     # [1,4,H,W]
-    ]
+    if DFL_MODE == "exp":
+        wn = np.zeros((4, nb, 1, 1), np.float32); wd = np.ones((4, nb, 1, 1), np.float32)
+        for a in range(4): wn[a, :, 0, 0] = np.arange(nb)
+        Wn = numpy_helper.from_array(wn, name + "_wn"); Wd = numpy_helper.from_array(wd, name + "_wd")
+        new_inits += [Wn, Wd]
+        new_nodes += [
+            helper.make_node("Exp", [name + "_dfl"], [name + "_ex"]),
+            helper.make_node("Conv", [name + "_ex", Wn.name], [name + "_num"], kernel_shape=[1, 1], group=4),
+            helper.make_node("Conv", [name + "_ex", Wd.name], [name + "_den"], kernel_shape=[1, 1], group=4),
+            helper.make_node("Div", [name + "_num", name + "_den"], [name]),
+        ]
+    else:
+        proj = numpy_helper.from_array(np.arange(nb, dtype=np.float32).reshape(nb, 1), name + "_proj")
+        new_inits += [s0, s1, proj]
+        new_nodes += [
+            helper.make_node("Reshape", [name + "_dfl", s0.name], [name + "_r"]),
+            helper.make_node("Transpose", [name + "_r"], [name + "_t"], perm=[0, 1, 3, 2]),
+            helper.make_node("Softmax", [name + "_t"], [name + "_sm"], axis=3),
+            helper.make_node("MatMul", [name + "_sm", proj.name], [name + "_e"]),
+            helper.make_node("Reshape", [name + "_e", s1.name], [name]),
+        ]
     for o in r.graph.output:
         if o.name == name:
             o.type.tensor_type.shape.dim[1].dim_value = 4
