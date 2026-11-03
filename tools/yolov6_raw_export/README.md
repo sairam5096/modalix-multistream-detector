@@ -42,6 +42,24 @@ models:
 then 3 class heads). With the default `Auto` the runtime pairs the heads per level and the
 pack fails to build (`BoxDecode kernel recipe: logical channel count exceeds source storage`).
 
+## Class count (`num_classes`)
+
+The script does not assume a class count. It cuts the graph at the model's own `cls_preds`
+convolutions, so the `cls_N` outputs have whatever depth the model was trained with (80 for
+COCO, 3 for a custom 3-class model, and so on). The last lines it prints tell you the value:
+
+```
+Detected num_classes = 3. Run the compiled pack with:
+  decode_type=yolov6  decode_type_option=GroupedByRoleLogit  num_classes=3
+```
+
+The compiled pack does **not** carry a class count that the 0.6.0 decoder trusts, so the
+runtime cannot detect it. You must pass `num_classes` yourself (config `num_classes:`,
+PyNeat `ModelOptions.num_classes`, C++ `Model::Options::num_classes`) and it must equal the
+printed value. Leaving it out fails the graph build with
+`BoxDecode kernel recipe: class count must be 1..336`; a wrong value shifts or drops class
+ids silently. Keep your labels file in the same order and length as the model's classes.
+
 Do **not** run `tools/surgery` on the result: that is the step that folds the decode back in.
 Use `tools/surgery` for Neat 0.3–0.5 runtimes, this script for 0.6.0 and later.
 
