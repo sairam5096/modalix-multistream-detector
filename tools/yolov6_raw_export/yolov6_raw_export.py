@@ -100,3 +100,8 @@ onnx.checker.check_model(r)
 onnx.save(r, dst)
 for o in r.graph.output:
     print(o.name, [d.dim_value for d in o.type.tensor_type.shape.dim])
+ncs = {o.type.tensor_type.shape.dim[1].dim_value for o in r.graph.output if o.name.startswith("cls_")}
+assert len(ncs) == 1, f"class heads disagree on channel count: {ncs}"
+nc = ncs.pop()
+print(f"\nDetected num_classes = {nc}. Run the compiled pack with:")
+print(f"  decode_type=yolov6  decode_type_option=GroupedByRoleLogit  num_classes={nc}")
