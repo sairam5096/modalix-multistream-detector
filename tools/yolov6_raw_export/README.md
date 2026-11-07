@@ -42,6 +42,11 @@ models:
      labels: my_labels.txt, min_score: 0.30}
 ```
 
+`run_pack.py` here is a minimal tested PyNeat runner (`python run_pack.py pack.tar.gz image.jpg <num_classes>`).
+Besides the three options above it sets `score_threshold`, `nms_iou_threshold` and `top_k`: a fresh
+PyNeat `ModelOptions` has them at 0 and the decoder refuses to build with `top_k = 0`
+("BoxDecode kernel recipe: top_k is unresolved").
+
 `decode_type_option: GroupedByRoleLogit` is mandatory for this output order (3 bbox heads,
 then 3 class heads). With the default `Auto` the runtime pairs the heads per level and the
 pack fails to build (`BoxDecode kernel recipe: logical channel count exceeds source storage`).
