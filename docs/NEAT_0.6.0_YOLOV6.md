@@ -75,6 +75,12 @@ sources at 3 fps, metadata to a UDP collector:
 | CMA | 8.7 GB free of 10 GB, flat |
 | graph build | 3.4 s |
 
+### int8
+The int8 compile of the same raw 3-class ONNX (bf16 flags dropped) places identically (MLA 1 / EV74 15 / A65 0),
+takes 10.5 min, is half the size (15.4 vs 31.5 MB) and runs 9.5 ms vs 15.2 ms per inference incl. preprocess and
+decode on the DevKit. On the COCO test image all 12 int8 boxes match a host DFL reference decode within 8 px
+(mean 3.6 px); scores are ~0.03 lower than bf16 on average and 4 low-score (<=0.41) bf16 boxes drop out.
+
 ## DFL variants (`reg_max > 0`)
 
 YOLOv6 heads trained with DFL have `4 × (reg_max+1)` regression channels (68 for
