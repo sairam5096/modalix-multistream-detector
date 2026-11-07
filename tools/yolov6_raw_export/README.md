@@ -29,7 +29,11 @@ Both compile fully on the MLA; a Transpose→Softmax(axis=1) form does not (Mode
 Softmax only on its channel axis). Verified on a 3-class `reg_max=16` export: 1e-6 vs the
 reference math in onnxruntime, and ±1 px vs a host reference decode when run on the DevKit.
 
-Then compile as usual (ModelSDK 3.0.0, int8 or bf16) and run with **all three** options:
+Then compile with ModelSDK 3.0.0 (int8 or bf16). `quantize_compile.py` in this directory is the
+standard SiMa compile script with two 3.0.0 fixes: optional `gen1_target` import, and the
+model-compiler `bin` dir prepended to PATH so `mla-masm` is found when the `.mlc` check files are
+written (in the `sdk:latest` container it is not on PATH and the compile fails late otherwise).
+Run with **all three** options:
 
 ```yaml
 models:
