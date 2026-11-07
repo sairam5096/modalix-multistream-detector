@@ -33,7 +33,7 @@ dets = pyneat.decode_bbox(out, clamp_to=(W, H))            # -> [N,6]: x1,y1,x2,
 arr = np.asarray(dets[0].to_numpy()).reshape(-1, 6)
 big = sum(1 for x1, y1, x2, y2, s, c in arr if x1 <= 1 and y1 <= 1 and (x2-x1) > 0.8*W and (y2-y1) > 0.8*H)
 print(f"{len(arr)} boxes, {big} frame-sized at origin  ({'OK' if big == 0 else 'DECODE BROKEN'})")
-for x1, y1, x2, y2, s, c in arr[:10]:
+for x1, y1, x2, y2, s, c in arr:
     print(f"  cls={int(c)} score={s:.2f} box=({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f})")
 if out_jpg:
     for x1, y1, x2, y2, s, c in arr:

@@ -55,6 +55,15 @@ PyNeat `ModelOptions` has them at 0 and the decoder refuses to build with `top_k
 then 3 class heads). With the default `Auto` the runtime pairs the heads per level and the
 pack fails to build (`BoxDecode kernel recipe: logical channel count exceeds source storage`).
 
+## PyNeat preprocessing (four lines, not two)
+
+The options table above is not sufficient on its own in PyNeat. `run_pack.py` sets
+`preprocess.kind = Image`, `preprocess.enable = AutoFlag.On`,
+`preprocess.color_convert.input_format = PreprocessColorFormat.BGR` (match your buffer) and
+`preprocess.preset = COCO_YOLO`, and pushes `Tensor.from_numpy(img, image_format=PixelFormat.BGR)`.
+Without the `color_convert.input_format` line the model loads but `run()` fails with
+`[misconfig.media_caps] ... Diagnostic ID: gstreamer.caps_incompatible`.
+
 ## Class count (`num_classes`)
 
 The script does not assume a class count. It cuts the graph at the model's own `cls_preds`
