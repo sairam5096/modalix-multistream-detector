@@ -25,12 +25,23 @@ import onnx
 from onnxsim import simplify
 import dataclasses
 
+
+# ModelSDK 3.0.0: the compiler shells out to a bare `mla-masm` (in the model-compiler venv bin dir) when it writes
+# the .mlc check files; make sure it is on PATH even when the venv was not "activated" in this shell.
+import os as _os, sys as _sys
+_bin = _os.path.dirname(_os.path.abspath(_sys.executable))
+if _os.path.exists(_os.path.join(_bin, "mla-masm")) and _bin not in _os.environ.get("PATH", "").split(_os.pathsep):
+    _os.environ["PATH"] = _bin + _os.pathsep + _os.environ.get("PATH", "")
 # SiMa Model Compiler Imports
 from afe.apis.defines import (
     default_quantization, quantization_scheme,
-    RequantizationMode, CalibrationMethod, gen2_target,gen1_target, bfloat16_scheme,
+    RequantizationMode, CalibrationMethod, gen2_target, bfloat16_scheme,
     TensorTessellateParameters, TensorDRAMLayout, InputName
 )
+try:  # ModelSDK 3.0.0 dropped gen1_target (davinci); keep the import optional
+    from afe.apis.defines import gen1_target
+except ImportError:
+    gen1_target = None
 from afe.load.importers.general_importer import ImporterParams, ModelFormat
 from afe.ir.tensor_type import ScalarType
 from afe.apis.loaded_net import load_model
@@ -263,6 +274,8 @@ class ModelProcessor:
         )
         
         target_device = gen2_target if self.args.device == "modalix" else gen1_target
+        if target_device is None:
+            raise SystemExit("--device davinci (gen1_target) is not supported by this Model SDK; use --device modalix")
         loaded_net = load_model(importer_params, target=target_device)
         logger.info(f"Model successfully loaded for {self.args.device}")
 
