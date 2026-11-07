@@ -103,10 +103,16 @@ the original ONNX to within 1 px (e.g. person 0.94 at (594,24)-(640,252) vs (594
 - ModelSDK 3.0.0's `afe.apis.defines` no longer exports `gen1_target`; older compile scripts
   must import it optionally.
 - Do not run `tools/surgery` after the raw export; that step folds the decode back in.
-- In the `ghcr.io/sima-neat/sdk:latest` container the compiler shells out to a bare `mla-masm`, which is not on
-  PATH even in a login shell; run the compile with `export PATH=/sdk-extensions/model-compiler/bin:$PATH` or
-  it fails late in code generation with `FileNotFoundError: 'mla-masm'`. The `sdk:v3.0.0.0` image cannot
-  `import afe` at all (missing `libLLVM.so.18.1`).
+- In the SDK containers (`sdk:v3.0.0.0` GA and `sdk:latest`) the compiler shells out to a bare `mla-masm`,
+  which is not on PATH for a non-login shell; `tools/yolov6_raw_export/quantize_compile.py` prepends the
+  compiler `bin` dir itself, otherwise the compile fails late in code generation with
+  `FileNotFoundError: 'mla-masm'`.
+- The model compiler is not part of the Docker image; it is the `model-compiler` extension venv mounted as
+  `/sdk-extensions/model-compiler`, installed by `sima-cli sdk setup --image ghcr.io/sima-neat/sdk:v3.0.0.0`
+  together with its system packages (`libllvm18`, `libopenblas0-pthread`, ...). A venv installed without that
+  step fails `import afe` with `libLLVM.so.18.1` missing; rerunning the setup fixes it. Verified: the same
+  3-class model compiled in a freshly set-up GA container gives identical placement and identical boxes on
+  the DevKit to the `sdk:latest` compile.
 - `num_classes` is mandatory with the raw pack (see table); the raw pack has no class count metadata the decoder trusts.
 - The C++ app in `som/` accepts `decode_type_option` and per-model `num_classes` on this branch
   (it needs the Neat 0.6.0 headers to build; older sysroots lack `decode_type_option`). The SDK 3.0.0

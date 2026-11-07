@@ -32,7 +32,11 @@ reference math in onnxruntime, and ±1 px vs a host reference decode when run on
 Then compile with ModelSDK 3.0.0 (int8 or bf16). `quantize_compile.py` in this directory is the
 standard SiMa compile script with two 3.0.0 fixes: optional `gen1_target` import, and the
 model-compiler `bin` dir prepended to PATH so `mla-masm` is found when the `.mlc` check files are
-written (in the `sdk:latest` container it is not on PATH and the compile fails late otherwise).
+written (in the SDK containers it is not on PATH and the compile fails late otherwise).
+Verified in both `ghcr.io/sima-neat/sdk:v3.0.0.0` (GA) and `sdk:latest`, installed with the official
+`sima-cli sdk setup --image ghcr.io/sima-neat/sdk:v3.0.0.0 --workspace <dir>`. If `import afe` in the
+compiler venv fails with `libLLVM.so.18.1` or `libopenblas.so.0` missing, the model-compiler
+extension was installed without the setup's system-package step: rerun the setup.
 Run with **all three** options:
 
 ```yaml
